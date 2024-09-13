@@ -1,0 +1,48 @@
+# Visual Studio transient data
+.vs/
+**/.vs/
+*.VC.db
+*.VC.opendb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+ipch/
+
+# MSVC build outputs, including nested project output directory
+x64/
+[Cc]rol/x64/
+Debug/
+Release/
+**/Debug/
+**/Release/
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.lastbuildstate
+*.recipe
+*.log
+*.exe
+*.dll
+*.lib
+*.exp
+*.pch
+
+# Historical source archive: not part of the current build
+/Crol.ex
+
+# Python test cache and local environment
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+
+# Local IDE/editor settings
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
