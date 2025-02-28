@@ -23,7 +23,8 @@ Stmts* Parser::statements() {
 		try {
 			stmts.push_back(this->statement());
 		}
-		catch (exception) {
+		catch (exception exc) {
+			printf("%s\n", exc.what());
 			this->synchronizeError();
 		}
 	}
@@ -54,6 +55,9 @@ Node* Parser::statement() {
 	}
 	else if (this->match(TOKEN_FOR)) {
 		return this->forStatement();
+	}
+	else if (this->match(TOKEN_FOREACH)) {
+		return this->forEachStatement();
 	}
 	else if (this->match(TOKEN_RETURN)) {
 		return this->returnStatement();
@@ -150,6 +154,28 @@ For* Parser::forStatement() {
 	return forloop;
 }
 
+ForEach* Parser::forEachStatement() {
+	LoopType parentloop = this->looptype;
+	this->looptype = LOOP_FOR;
+
+	this->consume(TOKEN_OPEN_PAREN, "Expected open parenthese");
+	this->consume(TOKEN_IDENTIFIER, "Expected an identifier");
+
+	Token id = this->previous();
+
+	this->consume(TOKEN_IN, "Expected `in` keyword");
+
+	Node* itexpr = this->expression();
+
+	this->consume(TOKEN_CLOSE_PAREN, "Expected close parenthese");
+	this->consume(TOKEN_OPEN_BRACE, "Expected a `{` before loop's body");
+
+	auto node = NODE(ForEach)(id, itexpr, this->blockStatement());
+
+	this->looptype = parentloop;
+	return node;
+}
+
 While* Parser::whileStatement() {
 	LoopType parentloop = this->looptype;
 	this->looptype = LOOP_WHILE;
@@ -232,7 +258,7 @@ VarDecl* Parser::varDeclStatment() {
 			init = this->expression();
 		}
 		else {
-			init = NODE(Literal)(Token{ TOKEN_NULL, name.start + name.length, 0, name.line });
+			init = NODE(Literal)(Token( TOKEN_NULL, name.start + name.length, 0, name.line ));
 		}
 		declarations.emplace_back((Token*)&name, init);
 	} while (this->match(TOKEN_COMMA));
@@ -363,8 +389,8 @@ Node* Parser::factor() {
 
 Node* Parser::pow() {
 	Node* a = this->unary();
-	while (this->match(TOKEN_POW)) {
-		a = NODE(Binary)(a, this->unary(), ASSIGN_POW);
+	if (this->match(TOKEN_POW)) {
+		return NODE(Binary)(a, this->pow(), ASSIGN_POW);
 	}
 	return a;
 }
@@ -459,18 +485,12 @@ vector<Node*> Parser::argumentList() {
 	return args;
 }
 
-Func* Parser::functionExpression() {
-	LoopType old_ltp = this->looptype;
-	FuncType old_ftp = this->functype;
-
-	this->looptype = LOOP_NONE;
-	this->functype = FUNC_FUNC;
-
+Func* Parser::functionLikeExpression() {
 	string name;
 
 	if (!this->match(TOKEN_OPEN_PAREN)) {
 		this->consume(TOKEN_IDENTIFIER, "Expected function name");
-		name = tokenToString(&this->previous());
+		name = this->previous().getStr();
 		this->consume(TOKEN_OPEN_PAREN, "Expected open parenthese before argument names");
 	}
 
@@ -478,7 +498,7 @@ Func* Parser::functionExpression() {
 
 	if (!this->match(TOKEN_CLOSE_PAREN)) {
 		this->consume(TOKEN_IDENTIFIER, "Expected an argument name");
-		argnames.emplace_back(tokenToString(&this->previous()));
+		argnames.emplace_back(this->previous().getStr());
 
 		while (!this->match(TOKEN_CLOSE_PAREN)) {
 			if (argnames.size() >= UINT16_MAX) {
@@ -487,13 +507,23 @@ Func* Parser::functionExpression() {
 
 			this->consume(TOKEN_COMMA, "Expected a comma after an argument name");
 			this->consume(TOKEN_IDENTIFIER, "Expected an argument name");
-			argnames.emplace_back(tokenToString(&this->previous()));
+			argnames.emplace_back(this->previous().getStr());
 		}
 	}
 
 	this->consume(TOKEN_OPEN_BRACE, "Expected open brace before function body");
 
-	Func* func = NODE(Func)(name, this->blockToStmts(), argnames);
+	return NODE(Func)(name, this->blockToStmts(), argnames);
+}
+
+Func* Parser::functionExpression() {
+	LoopType old_ltp = this->looptype;
+	FuncType old_ftp = this->functype;
+
+	this->looptype = LOOP_NONE;
+	this->functype = FUNC_NORMAL;
+
+	auto func = functionLikeExpression();
 
 	this->looptype = old_ltp;
 	this->functype = old_ftp;
@@ -501,12 +531,36 @@ Func* Parser::functionExpression() {
 	return func;
 }
 
+Generator* Parser::generatorFunctionExpression() {
+	this->consume(TOKEN_FUNC, "Expected `func` keyword after `gator` keyword");
+
+	LoopType old_ltp = this->looptype;
+	FuncType old_ftp = this->functype;
+
+	this->looptype = LOOP_NONE;
+	this->functype = FUNC_GENERATOR;
+
+	auto func = functionLikeExpression();
+
+	this->looptype = old_ltp;
+	this->functype = old_ftp;
+
+	return NODE(Generator)(func);
+}
+
 New* Parser::newExpression() {
 	Node* node = this->singularity();
 	if (node->type != NODE_CALL && node->type != NODE_INVOKE) {
-		throw this->error("'new' expression must be followed by an activation (invoke or call)");
+		throw this->error("`new` expression must be followed by an activation (invoke or call)");
 	}
 	return NODE(New)(node);
+}
+
+Yield* Parser::yieldExpression() {
+	if (this->functype != FUNC_GENERATOR) {
+		throw this->error("`yield` only allowed inside a generator function");
+	}
+	return NODE(Yield)(this->expression());
 }
 
 ObjectGenerator* Parser::objectGeneratorExpression() {
@@ -557,7 +611,7 @@ ListGenerator* Parser::listGeneratorExpression() {
 }
 
 This* Parser::thisExpression() {
-	if (this->functype != FUNC_FUNC) {
+	if (this->functype != FUNC_NORMAL) {
 		this->back();
 		throw this->error("Cannot use 'this' outside of function");
 	}
@@ -613,8 +667,14 @@ Node* Parser::literal() {
 	else if (this->match(TOKEN_FUNC)) {
 		return this->functionExpression();
 	}
+	else if (this->match(TOKEN_GATOR)) {
+		return this->generatorFunctionExpression();
+	}
 	else if (this->match(TOKEN_NEW)) {
 		return this->newExpression();
+	}
+	else if (this->match(TOKEN_YIELD)) {
+		return this->yieldExpression();
 	}
 
 	throw this->error("Unexpected token");

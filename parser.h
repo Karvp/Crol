@@ -13,43 +13,74 @@ enum LoopType {
 };
 
 enum FuncType {
-	FUNC_NONE, FUNC_FUNC
+	FUNC_NONE, FUNC_NORMAL, FUNC_GENERATOR,
 };
+
+// Returns true if token type is not semi-colon or closing brace, false otherwise
+inline constexpr bool isTokenSCorCB(const TokenType& type) {
+	return type == TOKEN_SEMICOLON || type == TOKEN_CLOSE_BRACE;
+}
 
 
 class Parser {
 public:
-	Parser(const vector<Token>& tokens) : tokens(tokens), i(0), looptype(LOOP_NONE), functype(FUNC_NONE) {
+	Parser() {
 	}
 
-	Node* parse() {
-		ok = true;
-		Node* root = this->statements();
+	Node* parse(vector<Token>& tokens, bool& is_parsed_as_expression) {
+		this->tokens = &tokens;
+		this->reset();
 
-		if (ok) {
+		show_error = ok = true;
+		Node* root;
+
+		try {
+			if (is_parsed_as_expression = (tokens.size() >= 2 && !isTokenSCorCB((++tokens.rbegin())->type))) {
+				try {
+					show_error = false;
+					root = this->expression();
+					show_error = true;
+				}
+				catch (exception) {
+					show_error = ok = true;
+					this->reset();
+					root = this->statements();
+				}
+			}
+			else
+				root = this->statements();
+
 			ok = false;
 			nodes.clear();
 			return root;
 		}
-		else {
+		catch (exception) {
 			this->deleteNodes();
 			return NULL;
 		}
 	}
 
+	void reset() {
+		looptype = LOOP_NONE;
+		functype = FUNC_NONE;
+		i = 0;
+
+		deleteNodes();
+	}
+
 private:
-	const set<TokenType> statement_starters{ TOKEN_IF, TOKEN_TRY, TOKEN_WHILE, TOKEN_FOR, TOKEN_BREAK, TOKEN_VAR, TOKEN_CONTINUE };
-	const vector<Token>& tokens;
-	size_t i;
+	const set<TokenType> statement_starters{ TOKEN_IF, TOKEN_TRY, TOKEN_WHILE, TOKEN_FOR, TOKEN_BREAK, TOKEN_VAR, TOKEN_CONTINUE, TOKEN_FOREACH };
+	vector<Token>* tokens = NULL;
+	size_t i = 0;
 
 	vector<Node*> nodes;
 
-	LoopType looptype;
-	FuncType functype;
-	bool ok = false;
+	LoopType looptype = LOOP_NONE;
+	FuncType functype = FUNC_NONE;
+	bool ok = false, show_error = true;
 
 	inline const Token& current() {
-		return this->tokens[this->i];
+		return (*this->tokens)[this->i];
 	}
 
 	void back() {
@@ -57,15 +88,15 @@ private:
 	}
 
 	const Token& previous() const noexcept {
-		return this->tokens[this->i - 1];
+		return (*this->tokens)[this->i - 1];
 	}
 
 	const Token& advance() noexcept {
-		return this->tokens[this->i++];
+		return (*this->tokens)[this->i++];
 	}
 
 	bool check(TokenType type) const noexcept {
-		return this->tokens[this->i].type == type;
+		return (*this->tokens)[this->i].type == type;
 	}
 
 	bool match(TokenType type) {
@@ -86,7 +117,8 @@ private:
 		ok = false;
 
 		Token curr = this->current();
-		printf("ParseError at '%s': %s on line %d\n", string(curr.start, curr.length).data(), msg, curr.line);
+		if (show_error)
+			printf("ParseError at '%s' on line %d: %s\n", string(curr.start, curr.length).data(), curr.line, msg);
 		return exception(msg);
 	}
 
@@ -128,6 +160,7 @@ private:
 
 	While* whileStatement();
 	For* forStatement();
+	ForEach* forEachStatement();
 	If* ifStatement();
 	TryCatch* tryCatchStatement();
 	Condition* conditionComponent();
@@ -151,12 +184,15 @@ private:
 	Node* singularity();
 
 	vector<Node*> argumentList();
+	Func* functionLikeExpression();
 	Func* functionExpression();
+	Generator* generatorFunctionExpression();
 	ObjectGenerator* objectGeneratorExpression();
 	ListGenerator* listGeneratorExpression();
 	Node* preferredExpressionOrTupleGenerator();
 	This* thisExpression();
 	New* newExpression();
+	Yield* yieldExpression();
 
 	Stmts* blockToStmts();
 

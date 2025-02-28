@@ -14,7 +14,7 @@
 
 using namespace std;
 
-class Value;
+typedef unsigned long long Value;
 
 
 enum AssignType {
@@ -36,12 +36,13 @@ enum NodeType {
 	NODE_ASSIGN,
 	NODE_INSTANCEOF,
 	NODE_CHAIN_EXPRESSION,
-	NODE_FUNC, NODE_NEW,
+	NODE_GENERATOR, NODE_FUNC, NODE_NEW,
+	NODE_YIELD,
 	NODE_VAR_DECL,
 	NODE_PRINT, NODE_BREAK, NODE_CONTINUE, NODE_RETURN, NODE_RAISE,
 	NODE_STMTS, NODE_BLOCK,
 	NODE_CONDITION,
-	NODE_TRY_CATCH, NODE_IF, NODE_WHILE, NODE_FOR,
+	NODE_TRY_CATCH, NODE_IF, NODE_WHILE, NODE_FOR, NODE_FOREACH,
 
 	NODE_EXPRESSION_IN_STATEMENTS
 };
@@ -230,6 +231,15 @@ public:
 	vector<string> argsname;
 };
 
+class Generator : public Node {
+public:
+	Generator(Func* function) : function(function) {
+		this->type = NODE_GENERATOR;
+	}
+
+	Func* function;
+};
+
 class Call : public Node {
 public:
 	Call(Node* callee, const vector<Node*>& args) : callee(callee), args(args) {
@@ -261,6 +271,15 @@ public:
 
 	// An activation is an invoktion or call
 	Node* activation;
+};
+
+class Yield : public Node {
+public:
+	Yield(Node* value) : value(value) {
+		this->type = NODE_YIELD;
+	}
+
+	Node* value;
 };
 
 class Return : public Node {
@@ -366,6 +385,17 @@ public:
 
 	Node* init, * cond, * incr;
 	Block* body;
+};
+
+class ForEach : public Node {
+public:
+	ForEach(Token varname, Node* itexpr, Block* body) : varname(varname), itexpr(itexpr), body(body) {
+		this->type = NODE_FOREACH;
+	}
+
+	Node* itexpr;
+	Block* body;
+	Token varname;
 };
 
 

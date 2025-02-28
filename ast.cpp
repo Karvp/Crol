@@ -60,6 +60,9 @@ void AST::scan(Node* curr) {
 		this->scan(node->name, node->value);
 		break;
 	}
+	case NODE_YIELD:
+		this->scan(((Yield*)curr)->value);
+		break;
 	case NODE_VAR_DECL: {
 		VarDecl* node = (VarDecl*)curr;
 		for (auto& declare : node->declarations) {
@@ -109,11 +112,19 @@ void AST::scan(Node* curr) {
 		this->scan(node->init, node->cond, node->incr, node->body);
 		break;
 	}
+	case NODE_FOREACH: {
+		ForEach* node = (ForEach*)curr;
+		this->scan(node->itexpr, node->body);
+		break;
+	}
 	case NODE_FUNC: {
 		Func* node = (Func*)curr;
 		this->scan(node->stmts);
 		break;
 	}
+	case NODE_GENERATOR:
+		this->scan(((Generator*)curr)->function);
+		break;
 	case NODE_CALL: {
 		Call* node = (Call*)curr;
 		this->scan(node->callee);

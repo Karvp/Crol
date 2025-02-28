@@ -2,7 +2,7 @@
 
 void Lexer::lex() {
 	while (this->index < this->length) {
-		switch (this->source[this->index]) {
+		switch ((*this->source)[this->index]) {
 		case ':':
 			this->addToken(TOKEN_COLON, 1);
 			break;
@@ -34,7 +34,7 @@ void Lexer::lex() {
 			this->addToken(TOKEN_CLOSE_BRACE, 1);
 			break;
 		case '+':
-			if (this->index + 1 < this->length && this->source[this->index + 1] == '+') {
+			if (this->index + 1 < this->length && (*this->source)[this->index + 1] == '+') {
 				this->addToken(TOKEN_PLUS_PLUS, 2);
 				++this->index;
 			}
@@ -43,7 +43,7 @@ void Lexer::lex() {
 			}
 			break;
 		case '-':
-			if (this->index + 1 < this->length && this->source[this->index + 1] == '-') {
+			if (this->index + 1 < this->length && (*this->source)[this->index + 1] == '-') {
 				this->addToken(TOKEN_MINUS_MINUS, 2);
 				++this->index;
 			}
@@ -64,7 +64,7 @@ void Lexer::lex() {
 			this->addToken(TOKEN_POW, 1);
 			break;
 		case '=': {
-			if (this->index + 1 < this->length && this->source[this->index + 1] == '=') {
+			if (this->index + 1 < this->length && (*this->source)[this->index + 1] == '=') {
 				this->addToken(TOKEN_EQ_EQ, 2);
 				++this->index;
 			}
@@ -74,7 +74,7 @@ void Lexer::lex() {
 			break;
 		}
 		case '<': {
-			if (this->index + 1 < this->length && this->source[this->index] == '=') {
+			if (this->index + 1 < this->length && (*this->source)[this->index] == '=') {
 				this->addToken(TOKEN_LESS_EQ, 2);
 				++this->index;
 			}
@@ -84,7 +84,7 @@ void Lexer::lex() {
 			break;
 		}
 		case '>': {
-			if (this->index + 1 < this->length && this->source[this->index + 1] == '=') {
+			if (this->index + 1 < this->length && (*this->source)[this->index + 1] == '=') {
 				this->addToken(TOKEN_GREATER_EQ, 2);
 				++this->index;
 			}
@@ -94,7 +94,7 @@ void Lexer::lex() {
 			break;
 		}
 		case '!': {
-			if (this->index + 1 < this->length && this->source[this->index + 1] == '=') {
+			if (this->index + 1 < this->length && (*this->source)[this->index + 1] == '=') {
 				this->addToken(TOKEN_NEQ, 2);
 				++this->index;
 			}
@@ -107,14 +107,14 @@ void Lexer::lex() {
 			this->addToken(TOKEN_QUES, 1);
 			break;
 		case '&':
-			if (this->index + 1 < this->length && this->source[this->index + 1] == '&') {
+			if (this->index + 1 < this->length && (*this->source)[this->index + 1] == '&') {
 				this->addToken(TOKEN_AND, 2);
 				++this->index;
 				break;
 			}
 			throw this->error("Unexpected token");
 		case '|':
-			if (this->index + 1 < this->length && this->source[this->index + 1] == '|') {
+			if (this->index + 1 < this->length && (*this->source)[this->index + 1] == '|') {
 				this->addToken(TOKEN_OR, 2);
 				++this->index;
 				break;
@@ -122,7 +122,7 @@ void Lexer::lex() {
 			throw this->error("Unexpected token");
 		case '"':
 		case '\'':
-			this->addString(this->source[this->index]);
+			this->addString((*this->source)[this->index]);
 			break;
 		case ' ':
 		case '\t':
@@ -132,10 +132,10 @@ void Lexer::lex() {
 			++this->line;
 			break;
 		default:
-			if (isDigit(this->source[this->index])) {
+			if (isDigit((*this->source)[this->index])) {
 				this->addNumber();
 			}
-			else if (isAlpha(this->source[this->index])) {
+			else if (isAlpha((*this->source)[this->index])) {
 				this->addIdentifier();
 			}
 			else {
@@ -147,5 +147,5 @@ void Lexer::lex() {
 	}
 
 	// End of file token
-	this->tokens.push_back(Token{ TOKEN_EOF, &this->source[this->index], 0, this->line });
+	this->tokens.push_back(Token( TOKEN_EOF, &(*this->source)[this->index], 0, this->line ));
 }

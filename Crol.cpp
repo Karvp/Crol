@@ -7,7 +7,6 @@
 #include "ast.h"
 #include "object.h"
 #include "natives.h"
-#include "state.h"
 
 using namespace std;
 
@@ -29,43 +28,24 @@ bool optimizeAST(Node*& root, ValuePool* pool) {
     }
 }
 
-bool compileAST(Node* root, ValuePool* pool, NativeBase* base, Chunk*& chunk, ExecutionState* state) {
-    Compiler cp(root, pool);
-
-    Compiler::name_array predefined_names = base->getNativeIDs();
-    ExecutionState::global_mapping_type* globals_ref_map = NULL;
-    if (state) {
-        state->loadNames(&cp, predefined_names);
-        globals_ref_map = &state->get_ref_map();
+void optimizeBytecode(Chunk* chunk, bool print_bytecode = false) {
+    BytecodeOptimizer bc(chunk);
+    bc.optimize();
+    if (print_bytecode) {
+        cout << "\n<Main>\n";
+        chunk->print();
     }
-
-    bool success = cp.start(predefined_names, globals_ref_map);
-
-    cleanAST(root);
-    chunk = cp.getChunk();
-
-    if (state) {
-        state->cleanGlobalsMap(base);
-    }
-
-    return success;
-}
-
-void optimizeBytecode(Chunk* chunk) {
-    Code code(*chunk);
-    code.optimizeBytecode();
-    cout << "\n<Main>\n";
-    code.chunk.print();
 }
 
 void run(string& source) {
 
-    Lexer lex(source);
-    if (!lex.start())
+    Lexer lex;
+    if (!lex.start(source))
         return;
 
-    Parser parser(lex.getTokens());
-    Node* root = parser.parse();
+    Parser parser;
+    bool parsed_as_expr;
+    Node* root = parser.parse(lex.getTokens(), parsed_as_expr);
 
     if (!root) {
         return;
@@ -79,16 +59,16 @@ void run(string& source) {
         return;
     }
 
-    Chunk* chunk = NULL;
+    Compiler cp(root, &pool);
+    bool success = cp.start({});
 
-    if (!compileAST(root, &pool, base, chunk, NULL)) {
+    cleanAST(root);
+    if (!success) {
         delete base;
         return;
     }
 
-    optimizeBytecode(chunk);
-
-    FunctionObject* mainfunc = new FunctionObject("(main)", chunk, 0);
+    auto mainfunc = cp.produceFunction();
     ClosureObject* main = new ClosureObject(mainfunc);
 
     VM vm(main, base);
@@ -99,12 +79,26 @@ void run(string& source) {
 
     vm.run();
 
+    if (parsed_as_expr) {
+        TValue::print(*vm.stack_end--);
+    }
+
     delete base;
 }
 
 void runCMDLine() {
 
-    ExecutionState state;
+    Lexer lex;
+    Parser parser;
+    bool parsed_as_expr;
+
+    ValuePool pool;
+    NativeBase* base = NativeBase::generate(&pool);
+
+    Compiler cp(&pool);
+
+    VM vm(base);
+    vm.associate(&pool);
 
     string source;
     cout << ">>> ";
@@ -112,12 +106,13 @@ void runCMDLine() {
 
     while (!source.empty()) {
 
-        Lexer lex(source);
-        if (!lex.start())
+        if (!lex.start(source)) {
+            cout << ">>> ";
+            getline(cin, source);
             continue;
+        }
 
-        Parser parser(lex.getTokens());
-        Node* root = parser.parse();
+        Node* root = parser.parse(lex.getTokens(), parsed_as_expr);
 
         if (!root) {
             cout << ">>> ";
@@ -125,43 +120,44 @@ void runCMDLine() {
             continue;
         }
 
-        ValuePool pool;
-        NativeBase* base = NativeBase::generate(&pool);
-
         if (!optimizeAST(root, &pool)) {
-            delete base;
             cout << ">>> ";
             getline(cin, source);
             continue;
         }
 
-        Chunk* chunk = NULL;
+        cp.initialize(root);
+        bool success = cp.start({}, true);
 
-        if (!compileAST(root, &pool, base, chunk, &state)) {
-            delete base;
+        cleanAST(root);
+        if (!success) {
             cout << ">>> ";
             getline(cin, source);
             continue;
         }
 
-        //optimizeBytecode(chunk);
-        //chunk->print();
+        auto mainfunc = cp.produceFunction();
+        auto main = new ClosureObject(mainfunc);
 
-        FunctionObject* mainfunc = new FunctionObject("(main)", chunk, 0);
-        ClosureObject* main = new ClosureObject(mainfunc);
+#ifdef PRINT_CHUNK_AFTER_COMPILED
+        mainfunc->print();
+        printf("\n");
+        mainfunc->chunk->print();
+        printf("\n");
+#endif
 
-        VM vm(main, base);
-        vm.associate(&pool);
+        vm.initialize(main);
 
-        pool.registerObject(mainfunc);
-        pool.registerObject(main);
+        pool.silentRegisterObject(mainfunc);
+        pool.silentRegisterObject(main);
 
-        state.loadSnapshot(&vm);
         vm.run();
-        state.snapshot(&vm);
 
-        delete base;
-        cout << ">>> ";
+        if (parsed_as_expr && vm.execution_finished) {
+            TValue::print(*vm.stack_end--);
+        }
+
+        printf("\n>>> " + !parsed_as_expr);
         getline(cin, source);
     }
 }
@@ -169,5 +165,7 @@ void runCMDLine() {
 int main()
 {
     runCMDLine();
+    
+    reprValue(toValue(1.0)).as.num;
     return 0;
 }

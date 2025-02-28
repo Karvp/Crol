@@ -17,13 +17,12 @@ protected:
 	vector<Token> tokens;
 
 public:
-	Lexer(const string& src) : source(src) {
-		this->index = 0;
-		this->line = 1;
-		this->length = source.length();
+	Lexer() {
 	}
 
-	bool start() {
+	bool start(string& src) {
+		this->reset(src);
+
 		try {
 			this->lex();
 			return true;
@@ -34,12 +33,19 @@ public:
 		}
 	}
 
-	const decltype(tokens)& getTokens() {
+	void reset(string& src) {
+		source = &src;
+		index = 0;
+		length = src.length();
+		tokens.clear();
+	}
+
+	decltype(tokens)& getTokens() {
 		return tokens;
 	}
 
 protected:
-	const string& source;
+	string* source = NULL;
 	int line;
 	size_t index, length;
 
@@ -66,11 +72,15 @@ protected:
 		{"try", TOKEN_TRY},
 		{"catch", TOKEN_CATCH},
 		{"raise", TOKEN_RAISE},
-		{"new", TOKEN_NEW}
+		{"new", TOKEN_NEW},
+		{"yield", TOKEN_YIELD},
+		{"gator", TOKEN_GATOR},
+		{"foreach", TOKEN_FOREACH},
+		{"in", TOKEN_IN},
 	};
 
 	exception error(const char* msg) {
-		printf("LexerError at '%c': %s at line %d\n", this->source[this->index], msg, this->line);
+		printf("LexerError at '%c': %s at line %d\n", (*this->source)[this->index], msg, this->line);
 		return exception(msg);
 	}
 
@@ -79,19 +89,19 @@ protected:
 	}
 
 	void addToken(TokenType type, size_t start, int length) {
-		this->pushToken({ type, &this->source[start], length, this->line });
+		this->pushToken(Token(type, &(*this->source)[start], length, this->line));
 	}
 
 	void addToken(TokenType type, int length) {
-		this->pushToken({ type, &this->source[this->index], length, this->line });
+		this->pushToken(Token(type, &(*this->source)[this->index], length, this->line));
 	}
 
 	void addString(char quote) {
 		++this->index;
 		size_t start = this->index;
 
-		while (this->index < this->length && this->source[this->index] != quote) {
-			switch (this->source[this->index]) {
+		while (this->index < this->length && (*this->source)[this->index] != quote) {
+			switch ((*this->source)[this->index]) {
 			case '\\':
 				++this->index;
 				break;
@@ -113,17 +123,17 @@ protected:
 	void addNumber() {
 		size_t start = this->index;
 
-		while (this->index < this->length && isDigit(this->source[this->index])) {
+		while (this->index < this->length && isDigit((*this->source)[this->index])) {
 			++this->index;
 		}
 
-		if (this->index < this->length && this->source[this->index] == '.') {
+		if (this->index < this->length && (*this->source)[this->index] == '.') {
 			++this->index;
-			if (this->index == this->length || !isDigit(this->source[this->index])) {
+			if (this->index == this->length || !isDigit((*this->source)[this->index])) {
 				throw this->error("Expected digit");
 			}
 
-			while (this->index < this->length && isDigit(this->source[this->index])) {
+			while (this->index < this->length && isDigit((*this->source)[this->index])) {
 				++this->index;
 			}
 		}
@@ -134,13 +144,13 @@ protected:
 	void addIdentifier() {
 		size_t start = this->index++;
 
-		while (this->index < this->length && (isAlpha(this->source[this->index]) || isDigit(this->source[this->index]))) {
+		while (this->index < this->length && (isAlpha((*this->source)[this->index]) || isDigit((*this->source)[this->index]))) {
 			++this->index;
 		}
 
 		size_t length = this->index - start;
 
-		string lexeme(&this->source[start], length);
+		string lexeme(&(*this->source)[start], length);
 
 		if (keywords.count(lexeme)) {
 			this->addToken(keywords[lexeme], start, length);
