@@ -24,6 +24,8 @@ struct ControlFlow {
 };
 
 class Compiler;
+class StringObject;
+class FunctionObject;
 
 struct ResolveResult {
 	Compiler* compiler;
@@ -46,54 +48,65 @@ struct Local {
 
 class Compiler {
 public:
-	typedef vector<map<string, Local>> mapping_type;
-	typedef vector<string> name_array;
+	typedef string name_type;
+	typedef vector<name_type> name_array;
 
+	typedef map<name_type, Local> locals_map;
+	typedef vector<locals_map> mapping_type;
 
-	Compiler(Node* root, ValuePool* pool) : root(root), parent(NULL), chunk(new Chunk(pool)), name("Main") {
-		pool->currentCompiler = this;
-		pool->addChunk(this->chunk);
+	Compiler(ValuePool* pool, Compiler* parent = NULL) : pool(pool), parent(parent) {
+		preinit();
 	}
 
-	Compiler(Node* root, ValuePool* pool, Compiler* parent, string name) : root(root), parent(parent), chunk(new Chunk(pool)), name(name) {
+	Compiler(Node* root, ValuePool* pool, Compiler* parent = NULL, string name = "(main)") : pool(pool), parent(parent) {
+		preinit();
+		initialize(root, name);
+	}
+
+	void preinit();
+
+	void initialize(Node* root, string name = "(main)") {
+		if (!this->name.empty())
+			this->reset();
+
+		this->root = root;
+		this->name = name;
+
+		chunk = new Chunk(pool);
 		pool->currentCompiler = this;
-		pool->addChunk(this->chunk);
+		pool->addChunk(chunk);
 	}
 
 	~Compiler() {
-		chunk->getPool()->currentCompiler = this->parent;
+		pool->currentCompiler = this->parent;
 	}
 
-	bool start(const name_array& reg_names, mapping_type::value_type* globals_ref) {
-
+	bool start(const Compiler::name_array& reg_names, bool save_globals = false) {
 		try {
-			// Creates the first scope
-			this->newScope();
-
 			auto& uppermost_scope = this->bindings.back();
-
-			// Occupy first slot
-			uppermost_scope[this->firstSlotName] = { this->local_count, this->local_count++, false };
-
 			for (auto& x : reg_names) {
 				uppermost_scope[x] = { this->local_count, this->local_count++, false };
 			}
 
 			this->compile(this->root);
 
-			if (globals_ref) {
-				auto& globals = *globals_ref;
-				globals.clear();
-				globals.insert(uppermost_scope.begin(), uppermost_scope.end());
-				globals.erase(this->firstSlotName);
+			if (!save_globals && !this->parent) {
+				this->exitScope();
+				this->chunk->addOPs(OP_NULL);
 			}
+			this->chunk->addOPs(OP_RETURN);
 
-			this->exitScope();
-			this->chunk->addOPs(OP_NULL, OP_RETURN);
+			// Finalize Compilation
+			this->chunk->finalize();
+			// Optimize bytecode
+			BytecodeOptimizer bc(this->chunk);
+			bc.optimize();
 
 			return true;
 		}
 		catch (exception) {
+			// Reset incase failure
+			this->reset();
 			return false;
 		}
 	}
@@ -136,6 +149,8 @@ public:
 			SHORTCUT(While);
 		case NODE_FOR:
 			SHORTCUT(For);
+		case NODE_FOREACH:
+			SHORTCUT(ForEach);
 		case NODE_RETURN:
 			SHORTCUT(Return);
 		case NODE_BREAK:
@@ -154,6 +169,8 @@ public:
 			SHORTCUT(Decrease);
 		case NODE_FUNC:
 			SHORTCUT(Func);
+		case NODE_GENERATOR:
+			SHORTCUT(Generator);
 		case NODE_CALL:
 			SHORTCUT(Call);
 		case NODE_INVOKE:
@@ -176,6 +193,8 @@ public:
 			SHORTCUT(Raise);
 		case NODE_NEW:
 			SHORTCUT(New);
+		case NODE_YIELD:
+			SHORTCUT(Yield);
 		case NODE_INSTANCEOF:
 			SHORTCUT(InstanceOf);
 		case NODE_CHAIN_EXPRESSION:
@@ -200,6 +219,10 @@ public:
 	Chunk* getChunk() {
 		return this->chunk;
 	}
+
+	// Be cautious while using this function!
+	// Always remember to register the object with the value pool
+	FunctionObject* produceFunction(int arity = 0);
 
 	inline const map<string, Upvalue>& getUpvalues() noexcept {
 		return this->upvalues;
@@ -229,27 +252,43 @@ public:
 
 	string name;
 	Compiler* parent;
+
+protected:
+	void reset() {
+		while (bindings.size() > 1) {
+			bindings.pop_back();
+		}
+		local_count = bindings[0].size();
+
+		current_scope = 0;
+		listen_flags = false;
+		flags.clear();
+	}
 private:
 	const set<NodeType> NotExpr{ NODE_IF, NODE_BLOCK, NODE_STMTS, NODE_PRINT, NODE_VAR_DECL, NODE_WHILE, NODE_FOR, NODE_RETURN, NODE_TRY_CATCH, NODE_BREAK, NODE_CONTINUE, NODE_RAISE };
 	const string firstSlotName = "this";
 
+	ValuePool* pool;
 	Node* root;
 	Chunk* chunk;
 
 	map<string, Upvalue> upvalues;
 
 	mapping_type bindings;
-	int local_count = 0, upvalue_count;
+	chunk_size local_count, upvalue_count, special_var_count = 0, flag_stack_pos;
+	bool listen_flags = false;
 
 	int current_scope = -1;
 
 	vector<ControlFlow> flags;
 
-
 	void newScope() {
-		++this->current_scope;
-		if (this->current_scope + 1 >= this->bindings.size()) {
-			this->bindings.emplace_back();
+		if (current_scope == MAX_SCOPE_DEPTH)
+			throw this->error("Maximum scope depth reached (255)");
+
+		++current_scope;
+		if (current_scope + 1 >= bindings.size()) {
+			bindings.emplace_back();
 		}
 	}
 
@@ -271,7 +310,16 @@ private:
 	}
 
 	void addControlFlow(FlowType type, const size_t pos) {
+		if (!listen_flags) {
+			error("Control flow not allowed");
+		}
 		this->flags.emplace_back(type, pos);
+	}
+
+	void listenFlags() {
+		listen_flags = true;
+		flag_stack_pos = local_count;
+		this->flags.clear();
 	}
 
 	void resolveFlags(size_t continue_jump, size_t break_jump) {
@@ -279,15 +327,31 @@ private:
 			this->chunk->writeUshort(flag.pos, flag.type == FLOW_BREAK ? break_jump : continue_jump);
 		}
 		this->flags.clear();
+		listen_flags = false;
+		flag_stack_pos = MAX_CHUNK_SIZE;
 	}
 
 
-	ResolveResult addLocal(string* name);
+	ResolveResult addLocal(const string& name);
+	ResolveResult defaultLocal(const string& name) {
+		for (int i = this->current_scope; i >= 0; --i) {
+			auto& nameMapping = this->bindings[i];
+			if (nameMapping.count(name)) {
+				return { this, NAME_LOCAL, nameMapping[name].pos };
+			}
+		}
+
+		return this->addLocal(name);
+	}
+	ResolveResult addSpecialVar() {
+		return this->addLocal(string("$") + to_string(special_var_count++));
+	}
 
 	// Resolving names
-	ResolveResult resolveName(string* name);
-	ResolveResult resolveName(string* name, bool mark);
+	ResolveResult resolveName(const string& name, bool isfrominner = false);
 
+
+	pair<FunctionObject*, pair<int, bool>*> compileInnerFunction(Stmts* stmts, const string& name, const Compiler::name_array& locals, int arity);
 
 #define SHORTCUT(node_name) void visit ## node_name ## Node(node_name* node);
 
@@ -298,9 +362,10 @@ private:
 	// Usual nodes
 
 	SHORTCUT(Func);
-	SHORTCUT(Return);
+	SHORTCUT(Generator);
 
 	SHORTCUT(For);
+	SHORTCUT(ForEach);
 	SHORTCUT(While);
 
 	SHORTCUT(TryCatch);
@@ -315,7 +380,8 @@ private:
 	SHORTCUT(Break);
 	SHORTCUT(Continue);
 	SHORTCUT(Raise);
-
+	SHORTCUT(Return);
+	SHORTCUT(Yield);
 	
 	SHORTCUT(ChainExpression);
 	

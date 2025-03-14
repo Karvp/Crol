@@ -15,74 +15,107 @@ using namespace std;
 class Token;
 class TupleObject;
 
-typedef ushort chunk_size;
+struct ChunkConstants {
+	map<StringObject*, int> string_consts;
+	map<Value, int> number_consts;
+	map<TupleObject*, int> tuple_consts;
+
+	auto&& getString(StringObject* s) {
+		return string_consts[s];
+	}
+
+	bool hasString(StringObject* s) {
+		return string_consts.contains(s);
+	}
+
+	auto&& getTuple(TupleObject* t) {
+		return tuple_consts[t];
+	}
+
+	bool hasTuple(TupleObject* t) {
+		return tuple_consts.contains(t);
+	}
+
+	auto&& getNumber(Value num) {
+		return number_consts[num];
+	}
+
+	bool hasNumber(Value num) {
+		return number_consts.contains(num);
+	}
+};
 
 class Chunk {
 public:
-	Chunk() {}
-	Chunk(ValuePool* pool) : pool(pool) {}
+	Chunk() {
+		hub = new ChunkConstants();
+	}
+	Chunk(ValuePool* pool) : pool(pool) {
+		hub = new ChunkConstants();
+	}
 
-	constexpr vector<uint8_t>& getOPs() {
-		return this->ops;
+	~Chunk() {}
+
+	constexpr vector<bytecode>& getOPs() {
+		return ops;
 	}
 
 	constexpr vector<Value>& getConsts() {
-		return this->consts;
+		return consts;
 	}
 
 	constexpr ValuePool* getPool() {
-		return this->pool;
+		return pool;
 	}
 
-	const inline void popOPs(int n) {
-		while (n-- > 0) {
-			this->ops.pop_back();
-		}
-	}
-
-	const inline void addOPs(uint8_t op) {
-		this->ops.push_back(op);
+	const inline void addOPs(bytecode op) {
+		ops.push_back(op);
 	}
 
 	template <typename... Args>
-	const inline void addOPs(uint8_t op, Args... ops) {
-		this->addOPs(op);
-		this->addOPs(ops...);
+	const inline void addOPs(bytecode op, Args... ops) {
+		addOPs(op);
+		addOPs(ops...);
 	}
 
-	const size_t addGoto(uint8_t op) {
-		this->addOPs(op, 0, 0);
-		return this->length() - 2;
+	const size_t addGoto(bytecode op) {
+		addOPs(op, 0, 0);
+		return length() - 2;
 	}
 
-	const size_t argedOP(uint8_t op, unsigned short target) {
-		this->addOPs(op, target / 256, target % 256);
-		return this->length() - 2;
+	const size_t argedOP(bytecode op, chunk_size target) {
+		addOPs(op, target / 256, target % 256);
+		return length() - 2;
 	}
 
 	const inline void gotoTarget(size_t goto_pos) {
-		this->writeUshort(goto_pos, this->length());
+		writeUshort(goto_pos, length());
 	}
 
 	const inline void gotoTarget(size_t goto_pos, unsigned short target) {
-		this->writeUshort(goto_pos, target);
+		writeUshort(goto_pos, target);
+	}
+
+	const inline size_t addUshort(unsigned short value) {
+		addOPs(value / 256, value % 256);
+		return ops.size() - 2;
 	}
 
 	const inline void writeUshort(size_t i, unsigned short value) {
-		this->ops[i] = value / 256;
-		this->ops[i + 1] = value % 256;
+		ops[i] = value / 256;
+		ops[i + 1] = value % 256;
 	}
 
 	const inline void writeUchar(size_t i, unsigned char value) {
-		this->ops[i] = value;
+		ops[i] = value;
 	}
 
 	constexpr size_t length() const noexcept {
-		return this->ops.size();
+		return ops.size();
 	}
 
 	constexpr size_t constCount() const noexcept {
-		return this->consts.size();
+		return consts.size();
 	}
 
 	size_t addTokenConst(const Token& token);
@@ -92,101 +125,49 @@ public:
 
 	template <typename T>
 	size_t addObjectConst(T* obj) {
-		this->pool->registerObject(obj);
-		this->consts.emplace_back((Object*)obj);
-		return this->consts.size() - 1;
+		pool->registerObject(obj);
+		consts.emplace_back(toValue((Object*)obj));
+		return consts.size() - 1;
 	}
 
 	// Add an tuple constant that has been internalized (won't register the object)
 	size_t addTupleConst(TupleObject* tup) {
-		if (this->tuple_consts.contains(tup)) {
-			return this->tuple_consts[tup];
+		if (hub->hasTuple(tup)) {
+			return hub->getTuple(tup);
 		}
 
-		this->consts.emplace_back((Object*)tup);
-		return this->consts.size() - 1;
+		consts.emplace_back(toValue((Object*)tup));
+		return hub->getTuple(tup) = consts.size() - 1;
 	}
 
 	size_t addRegisteredObjectConst(Object* obj) {
-		this->consts.emplace_back(obj);
-		return this->consts.size() - 1;
+		consts.emplace_back(toValue(obj));
+		return consts.size() - 1;
 	}
 
 	void print();
 
 	Chunk* copy();
 
+	void finalize() {
+		ops.shrink_to_fit();
+		consts.shrink_to_fit();
+		
+		delete hub;
+	}
+
+	constexpr size_t _talloc_size() const noexcept {
+		return ops.capacity() * sizeof(decltype(ops)::value_type) +
+			consts.capacity() * sizeof(decltype(consts)::value_type);
+	}
 private:
-	vector<uint8_t> ops;
+	vector<bytecode> ops;
 	vector<Value> consts;
 
 	ValuePool* pool = NULL;
-
-	// This map is used to avoid unnecessary doubling, not to store constants
-	map<StringObject*, int> string_consts;
-	map<Value*, int> number_consts;
-	map<TupleObject*, int> tuple_consts;
+	ChunkConstants* hub = NULL;
 };
 
-
-struct Code {
-	Code(Chunk& chunk) : chunk(chunk) {}
-
-	void optimizeBytecode() {
-		BytecodeOptimizer bc(&this->chunk, this->chunk.getConsts().data());
-
-		bc.optimize();
-	}
-
-	Chunk& chunk;
-};
-
-static string __tokenToString(Token* token) {
-	const char* raw = token->start;
-
-	string output;
-	size_t index = 0, length = token->length;
-
-	while (index < length) {
-		switch (raw[index]) {
-		case '\\':
-			switch (raw[++index]) {
-			case 'n':
-				output.push_back('\n');
-				break;
-			case 't':
-				output.push_back('\t');
-				break;
-			case 'b':
-				output.push_back('\b');
-				break;
-			case 'r':
-				output.push_back('\r');
-				break;
-			case 'v':
-				output.push_back('\v');
-				break;
-			case 'a':
-				output.push_back('\a');
-				break;
-			case 'f':
-				output.push_back('\f');
-				break;
-			default:
-				output.push_back(raw[index]);
-				break;
-			}
-			++index;
-			continue;
-		case '\n':
-			++index;
-			break;
-		}
-		output.push_back(raw[index++]);
-	}
-
-	return output;
-}
 
 class OperationIterator {
 public:
@@ -428,19 +409,17 @@ public:
 	void finalizeEdits(bool isfinal) {
 		this->updatePointers();
 
-		vector<uint8_t> rebaked;
+		vector<bytecode> rebaked_ops;
+		for (const auto& op : *this) {
+			rebaked_ops.push_back(op.type);
 
-		size_t origin_i = 0;
-		for (auto& op : *this) {
-			rebaked.push_back(op.type);
-
-			uint8_t* ptr = op.arg, * end = op.arg + op.arg_count;
+			bytecode* ptr = op.arg, * end = op.arg + op.arg_count;
 			while (ptr != end) {
-				rebaked.push_back(*ptr++);
+				rebaked_ops.push_back(*ptr++);
 			}
 		}
 
-		chunk.getOPs() = rebaked;
+		chunk.getOPs() = rebaked_ops;
 
 		if (!isfinal) {
 			this->reset();
@@ -476,7 +455,7 @@ protected:
 
 	template <typename... Args>
 	void markOperation(Args... args) {
-		ops.emplace_back(args...);
+		ops.push_back(Operation(args...));
 		op_sizes.push_back(op_sizes.back() + ops.back().size());
 
 		if (Pointers.contains(ops.back().type)) {
@@ -494,20 +473,10 @@ protected:
 		memset(removed, false, ops.size());
 	}
 
-	void scanPointers() {
-		size_t i = 0;
-
-		for (auto& op : this->ops) {
-			if (Pointers.contains(op.type)) {
-				this->flagPointer(op, i);
-			}
-			++i;
-		}
-	}
-
 	void updatePointers() {
 		decltype(OperationIterator::op_sizes) temp_new_op_sizes{ 0 };
 
+		// Calculating removed operation size (in length)
 		bool* i_removed = removed;
 		for (auto& op : this->ops) {
 			if (*i_removed) {
@@ -530,8 +499,9 @@ protected:
 			int new_target_pos = temp_new_op_sizes[i];
 
 			if (new_target_pos != target_pos) {
+				// Overwritting target position
 				for (auto& op_pos : it.second) {
-					uint8_t* arg = this->ops[op_pos].arg;
+					bytecode* arg = this->ops[op_pos].arg;
 					arg[0] = new_target_pos / 256;
 					arg[1] = new_target_pos % 256;
 				}
@@ -540,7 +510,7 @@ protected:
 	}
 
 private:
-	const set<OP> Pointers{ OP_GOTO, OP_GOTO_IF_FALSE, OP_GOTO_IF_TRUE, OP_FLAG_CATCH };
+	const set<OP> Pointers{ OP_GOTO, OP_GOTO_IF_FALSE, OP_GOTO_IF_TRUE, OP_FLAG_CATCH, OP_GOTO_SET_STACK };
 	map<ushort, vector<size_t>> targets;
 
 	void transform();

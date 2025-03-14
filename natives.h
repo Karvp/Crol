@@ -26,6 +26,9 @@ public:
 	static void loadFunctionPrototype(NativeBase* nb);
 	static void loadTuplePrototype(NativeBase* nb);
 	static void loadListPrototype(NativeBase* nb);
+	static void loadSetPrototype(NativeBase* nb);
+	static void loadIterablePrototype(NativeBase* nb);
+	static void loadExceptionPrototype(NativeBase* nb);
 
 
 	// Inner definition
@@ -36,12 +39,14 @@ public:
 
 	~NativeBase() {}
 
-	void registerFunction(const string& name, NativeFunctionObject::fntype func) {
-		this->registerObject(name, AS_NATIVE_FUNCTION(this->makeFunction(func)));
+	auto registerFunction(const string& name, NativeFunctionObject::fntype func) {
+		auto nt_func = AS_NATIVE_FUNCTION(this->makeFunction(func, name.c_str()));
+		this->registerObject(name, nt_func);
+		return nt_func;
 	}
 
 	void registerObject(const string& name, Object* obj) {
-		this->registerValue(name, Value(obj));
+		this->registerValue(name, toValue(obj));
 	}
 
 	void registerValue(const string& name, const Value& val) {
@@ -58,49 +63,49 @@ public:
 	}
 
 	template <typename T, typename... Args>
-	T* createTemporaryObject(Args... args) {
-		T* obj = new T(args...);
-
-		if (dynamic_cast<Object*>(obj) == nullptr) {
-			throw exception("Object is not an object");
-		}
-		else if (obj->type == OBJECT_STRING) {
+	T* createTempObj(Args... args) {
+		Object* obj = new T(args...);
+		
+		if (obj->type == OBJECT_STRING) {
 			throw exception("Object should not be a string");
 		}
 
 		this->pool->nativeObject(obj);
-		return obj;
+		return (T*)obj;
 	}
 
 	template <typename T, typename... Args>
-	T* createPermanentObject(Args... args) {
-		T* obj = new T(args...);
+	T* createPermObj(Args... args) {
+		Object* obj = new T(args...);
 
-		if (dynamic_cast<Object*>(obj) == nullptr) {
-			throw exception("Object is not an object");
-		}
-		else if (obj->type == OBJECT_STRING) {
+		if (obj->type == OBJECT_STRING) {
 			throw exception("Object should not be a string");
 		}
 
 		this->pool->permanentObject(obj);
-		return obj;
+		return (T*)obj;
 	}
 
-	Object::property_map createMap(const vector<pair<const char*, Value>>& mapping);
+	dynamic_map createMap(const mapping_pairs& mapping);
 
 	Value makeStr(const char* str) {
-		return this->pool->internPermanentString(str);
+		return toValue(this->pool->internPermStr(str));
 	}
 
-	Value makeFunction(NativeFunctionObject::fntype func) {
-		Object* funcobj = this->createPermanentObject<NativeFunctionObject>(func);
+	Value makeFunction(NativeFunctionObject::fntype func, const char* fnname) {
+		Object* funcobj = this->createPermObj<NativeFunctionObject>(func, fnname);
 		funcobj->prototype = this->functionPrototype;
-		return funcobj;
+		return toValue(funcobj);
 	}
 
 	Object& objectPrototype = *ValuePool::getObjProto();
-	Object* stringPrototype, * functionPrototype, * listPrototype, * tuplePrototype;
+
+	// Prototypes
+	Object* stringPrototype, * functionPrototype, * listPrototype, * tuplePrototype, * setPrototype,
+		* iterablePrototype, * exceptionPrototype;
+
+	// Generator Functions a.k.a. constructors
+	Object* stringInit, * functionInit, * listInit, * tupleInit, * setInit;
 protected:
 	ValuePool* pool;
 

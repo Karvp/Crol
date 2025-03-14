@@ -1,93 +1,73 @@
 #pragma once
 
 #include "chunk.h"
-#include "object.h"
 #include "value.h"
 #include "common.h"
-#include "natives.h"
 #include <stack>
 #include <ctime>
 #include <chrono>
 
 using namespace std;
 
+class NativeBase;
+class NativeFunctionObject;
+class ClosureObject;
+class ExceptionObject;
+class CallableSpecie;
 
 typedef UpvalueObject** UpvalueArray;
 
-enum VMControlCode {
+struct ForLoopData {
+	chunk_size op_id, var_id, stack_id;
+};
+
+enum _VMControlCode {
 	VMCODE_NONE,
 	VMCODE_BREAK
 };
+typedef uint8_t VMControlCode;
 
 enum VMExecutionResult {
-	EXECUTION_SUCCEED,
-	EXECUTION_FAILED,
-	EXECUTION_HALTED_BY_EXCEPTION,
-	EXECUTION_HALTED_BY_NATIVE
+	EXEC_SUCCEED,
+	EXEC_FAILED,
+	EXEC_HALTED_BY_EXCEPTION,
+	EXEC_HALTED_BY_INTERNAL,
+	EXEC_HALTED_BY_YIELD
 };
 
 class CallFrame {
 public:
-	const ClosureObject* closure;
-	const Value* consts;
-	UpvalueArray upvalues;
-	uint8_t* ops, * start;
+	const CallableSpecie* callee;
+	bytecode* ops, * start;
 	Value* stack_begin;
-	int shift_back = 0;
 	VMControlCode finishCode = VMCODE_NONE;
+	bool invoked_by_new_op = false;
 
 	CallFrame() {}
+	CallFrame(NativeFunctionObject* callee, bool new_invocation = false);
+	CallFrame(ClosureObject* callee, Value* stack_begin, bool new_invocation = false, VMControlCode finishCode = VMCODE_NONE);
 
-	CallFrame(ClosureObject* closure, Value* stack_begin, VMControlCode finishCode = VMCODE_NONE) :
-		closure(closure),
-		consts(closure->function->chunk->getConsts().data()),
-		stack_begin(stack_begin),
-		upvalues(closure->upvalues),
-		finishCode(finishCode)
-	{
-		ops = start = closure->function->chunk->getOPs().data();
-	}
-
-	CallFrame& operator=(const CallFrame& cf) {
-		closure = cf.closure;
-		consts = cf.consts;
-		upvalues = cf.upvalues;
-		ops = cf.ops;
-		start = cf.start;
-		stack_begin = cf.stack_begin;
-		shift_back = cf.shift_back;
-		finishCode = cf.finishCode;
-
-		return *this;
-	}
+	constexpr bool isNativeFrame() const noexcept;
+	constexpr const char* getFuncName() const noexcept;
+	constexpr UpvalueArray getUpvalues() const noexcept;
+	constexpr Value* getConsts() const noexcept;
 };
 
 class VM {
 public:
-	VM(ClosureObject* closure, NativeBase* nb) : closure(closure), nb(nb) {
-		stack_begin = stackPtr = new Value[STACK_MAX_SIZE];
-		stack_end = stackPtr - 1;
-
-		*++stack_end = Value();
-		for (auto& x : nb->getNatives()) {
-			*++stack_end = x;
-		}
+	VM(NativeBase* nb) {
+		preinit(nb);
 	}
 
-	void throwValue(const Value& v);
-
-	void run() {
-		try {
-			this->newCallFrame(false, this->closure, this->stackPtr);
-			this->interpret();
-		}
-		catch (const Value& e) {
-			printf("Traceback most recent call(s):\n");
-			e.print();
-		}
+	VM(ClosureObject* callee, NativeBase* nb) {
+		preinit(nb);
+		initialize(callee);
 	}
 
-	VMExecutionResult interpret();
+	void preinit(NativeBase* nb);
+	void initialize(ClosureObject* callee) {
+		this->callee = (CallableSpecie*)callee;
+	}
 	void associate(ValuePool* pool) {
 		pool->vm = this;
 		this->pool = pool;
@@ -95,24 +75,26 @@ public:
 		pool->finalizeRegisterations();
 	}
 
-	template <typename T, typename... Args>
-	T* newException(Args... args) {
-		// Create callframe list
-		vector<const char*> cfnames;
-		for (auto i = frames.rbegin(); i != frames.rend(); ++i) {
-			cfnames.push_back(i->closure->function->fnname.c_str());
-		}
+	void run();
+	VMExecutionResult interpret();
 
-		auto exc = new T(args..., cfnames);
-		this->pool->registerObject(exc);
-		return exc;
+	constexpr bool isInvokedByNewOperator() const noexcept {
+		return this->frames.back().invoked_by_new_op;
 	}
 
-	Value uncatchedException(const Value& value) {
-		return Value(newException<RaisedExceptionObject>(value));
-	}
+	void throwValue(const Value& v);
 
-	void callValue(Object* callee_ptr, Value* call_ptr, const ushort arg_count, bool native_invocation = false, VMControlCode control_code = VMCODE_NONE);
+	ExceptionObject* newException(const char* msg, ExceptionType exc_type = EXCEPT_GENERAL_ERROR);
+
+	Value uncatchedException();
+
+	// Call a function
+	// If it is a native function, the execution will be done inside this function
+	// Otherwise it is a bytecode function, this function will set up the environment,
+	// preparing for it's interpretation
+	// 
+	// {return}: a boolean indicating if the interpretation has already done
+	bool callValue(Object* callee_ptr, Value* call_ptr, const ushort arg_count, VMControlCode control_code = VMCODE_NONE, bool new_invocation = false);
 
 	exception error(const char* msg) {
 		printf("RuntimeError: %s", msg);
@@ -123,34 +105,57 @@ public:
 		delete[] this->stackPtr;
 	}
 
-	ClosureObject* closure;
-	ValuePool* pool = NULL;
-	NativeBase* nb;
 
-	// Local Variables that saves the current state of the VM
-	bool throwing = false;
+	// Utilities
+	ValuePool* pool = NULL;
+	NativeBase* nb = NULL;
+
+	// VM flags
+	bool throwing = false, halt_request = false, execution_finished = false;
+
+	// Variables that shares current state of the VM
 	UpvalueArray upvalues;
 	const Value* consts;
 	Value* stackPtr, * stack_begin, * stack_end;
-	uint8_t* ops = NULL, * start = NULL;
+	bytecode* ops = NULL, * start = NULL;
 
+	// VM calling infos
+	CallableSpecie* callee;
+	vector<ClosureObject*> closureCalls;
 	CallFrame frame;
 	vector<CallFrame> frames;
 
-	vector<pair<uint8_t*, Value*>> stack_pos;
+	// Exception handler
+	stack<pair<bytecode*, Value*>> exc_jumps;
+	stack<ForLoopData> foreach_loops;
 
-	template <typename... Args>
-	void newCallFrame(bool natively_invoked, Args... args) {
-		frame = CallFrame(args...);
-		if (natively_invoked) {
-			frame.shift_back = 1;
+
+	void newCallFrame(const CallFrame& cf) {
+		frames.push_back(frame = cf);
+
+		if (!cf.isNativeFrame()) {
+			closureCalls.push_back((ClosureObject*)cf.callee);
+
+			ops = frame.ops;
+			start = frame.start;
+			upvalues = frame.getUpvalues();
+			consts = frame.getConsts();
+			stack_begin = frame.stack_begin;
 		}
-		frames.push_back(frame);
-
-		ops = frame.ops;
-		start = frame.start;
-		upvalues = frame.upvalues;
-		consts = frame.consts;
-		stack_begin = frame.stack_begin;
 	}
+
+	inline void updateLocals() {
+		frame = frames.back();
+
+		if (!frame.isNativeFrame()) {
+			ops = frame.ops;
+			start = frame.start;
+			upvalues = frame.getUpvalues();
+			consts = frame.getConsts();
+			stack_begin = frame.stack_begin;
+		}
+	}
+
+private:
+	bool ready = false;
 };

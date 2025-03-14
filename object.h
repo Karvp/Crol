@@ -1,13 +1,32 @@
 #pragma once
+
 #include <unordered_map>
 #include <cstring>
 #include "value.h"
+#include "common.h"
+#include "RolIterator.h"
 
 using namespace std;
 
 class Chunk;
+class VM;
 
-#define AS_TOBJECT(o, type) ((type*)AS_OBJECT(o))
+//
+// Object flag modifiers
+//
+#define OBJECT_ISREACHABLE(o) ((o)->flag & 0b1)
+#define OBJECT_FLAG_REACHABLE(o) ((o)->flag |= 0b1)
+#define OBJECT_UNFLAG_REACHABLE(o) ((o)->flag &= ~0b1)
+#define OBJECT_ISITERABLE(o) ((o)->flag & 0b10)
+#define OBJECT_FLAG_ITERABLE(o) ((o)->flag |= 0b10)
+#define OBJECT_UNFLAG_ITERABLE(o) ((o)->flag &= ~0b10)
+
+#define OBJECT_SPECIE_TYPE(o) ((o)->specie_type)
+#define OBJECT_SET_SPECIE_TYPE(o, t) static_assert(sizeof(decltype(t)) == 1); (o)->specie_type = (t);
+
+//
+// Object converter shortcut
+//
 #define AS_STRING(o) AS_TOBJECT(o, StringObject)
 #define AS_UPVALUE(o) AS_TOBJECT(o, UpvalueObject)
 #define AS_CLOSURE(o) AS_TOBJECT(o, ClosureObject)
@@ -16,7 +35,11 @@ class Chunk;
 #define AS_BOUND_FUNCTION(o) AS_TOBJECT(o, BoundFunctionObject)
 #define AS_LIST(o) AS_TOBJECT(o, ListObject)
 #define AS_TUPLE(o) AS_TOBJECT(o, TupleObject)
+#define AS_SET(o) AS_TOBJECT(o, SetObject)
 
+//
+// Object type checker
+//
 #define IS_STRING(o) (AS_OBJECT(o)->type == OBJECT_STRING)
 #define IS_UPVALUE(o) (AS_OBJECT(o)->type == OBJECT_UPVALUE)
 #define IS_CLOSURE(o) (AS_OBJECT(o)->type == OBJECT_CLOSURE)
@@ -25,64 +48,106 @@ class Chunk;
 #define IS_BOUND_FUNCTION(o) (AS_OBJECT(o)->type == OBJECT_BOUND_FUNCTION)
 #define IS_LIST(o) (AS_OBJECT(o)->type == OBJECT_LIST)
 #define IS_TUPLE(o) (AS_OBJECT(o)->type == OBJECT_TUPLE)
+#define IS_SET(o) (AS_OBJECT(o)->type == OBJECT_SET)
+
 
 #define IS_STRINGOBJ(v) (IS_OBJECT(v) && IS_STRING(v))
 #define IS_FUNCTIONOBJ(v) (IS_OBJECT(v) && IS_FUNCTION(v))
 #define IS_LISTOBJ(v) (IS_OBJECT(v) && IS_LIST(v))
 #define IS_TUPLEOBJ(v) (IS_OBJECT(v) && IS_TUPLE(v))
+#define IS_SETOBJ(v) (IS_OBJECT(v) && IS_SET(v))
+#define IS_ITERABLEOBJ(v) (IS_OBJECT(v) && AS_OBJECT(v)->type == OBJECT_ITERABLE)
 
 #define IS_CALLABLE(v) (IS_OBJECT(v) && (IS_CLOSURE(v) || IS_NATIVE_FUNCTION(v) || IS_BOUND_FUNCTION(v)))
 #define IS_DEFINED_FUNCTION(v) (IS_OBJECT(v) && (IS_CLOSURE(v) || (IS_BOUND_FUNCTION(v) && AS_TOBJECT(v, BoundFunctionObject)->function->type == OBJECT_CLOSURE)))
+#define IS_ITERABLE(v) (IS_OBJECT(v) && OBJECT_ISITERABLE(AS_OBJECT(v)))
 
-template <typename T>
-inline static void constructMemory(T* ptr) {
-	auto memlayout = new T();
-	memcpy(ptr, memlayout, sizeof(T));
-	free(memlayout);
-}
+//
+// Iterating
+//
 
-class VM;
+#define GET_ITER_SPECIE(o, iter_t) ((IterableSpecie<iter_t>*)o)
+#define ITER_OBJECT(o, iter_t) (GET_ITER_SPECIE(o, iter_t)->get_iterator())
+#define ITER_TUPLE(o) ITER_OBJECT(o, Value*)
+#define ITER_LIST(o) ITER_TUPLE(o)
+#define ITER_SET(o) ITER_OBJECT(o, rol_set_iterator)
+#define ITER_STRING(o) ITER_OBJECT(o, rol_string_iterator)
+#define ITER_PURE_OBJ(o) PureObjectIterable(o)
+#define ITER_ITERABLE(o) ((IterableObject*)o)->rol_it
+#define ITER_ANY_OBJ(o) vm->pool->itertool->iterateObject(o)
+#define ITER_ANY_VOBJ(o) ITER_ANY_OBJ(AS_OBJECT(o))
+
+
+// ***
+//   HOW TO IMPLEMENT NEW OBJECT
+// ***
+// 
+// - This guide will tell you what steps are required to add a new object type
+//
+// > Basically, there are 2 important things to do:
+//	1. Defintion phase
+//		+ Inherit from `Object` base class (very important)
+//			-> Make your object usable by other part of the language
+//		+ Declare your new type in `ObjectType` enum
+//			-> Remember to set the `type` field on construction
+//		(Optionally) + Set your own object name through the `name` field
+//  2. Garbage Collector
+//		+ Add your own object's tree iterator into `ValuePool::_GCmarkObject()`
+//			-> Helps the GC know which objects are accessible from your object
+//		(Optionally) + Add your object's pre-deconstructor into `ValuePool::runGC()`
+//			-> Incase your object is stored somewhere else
+//	3. Meta-info
+//	 > This helps provide information for specific object type
+//		+ Add your object size into `Object::obj_size()`
+//			-> Used by the GC to track memory usage
+//		(Optionally) + Add your own custom object constructor into `Object::specie_construct()`
+//			-> Will be invoked by the `new` operator
+//
+// &&&
+// That's all, enjoy
+// &&&
+
 
 class Object {
 public:
-	typedef dynamic_map property_map;
+	static Object* specie_construct(Object* target, VM* vm) noexcept;
+
 
 	ObjectType type = OBJECT_OBJECT;
-	bool mark = false;
+	uint8_t specie_type = OBJECT_OBJECT;
+	FLAG_TYPE flag = 0;
 	const char* name = "Object";
-	property_map props;
+	dynamic_map props;
 
 	Object* prototype = NULL;
 
 	Object() {}
 	Object(const char* name) : name(name) {}
-	Object(const char* name, const property_map& properties) : name(name), props(properties) {}
+	Object(const char* name, const dynamic_map& properties) : name(name), props(properties) {}
 
 	virtual ~Object(){}
 
-	property_map::iterator begin() {
-		return this->props.begin();
-	}
-
-	property_map::iterator end() {
-		return this->props.end();
-	}
-
-	virtual Value get(const Value& key, VM* vm) {
-		property_map::iterator it;
+	// Get property of object
+	// Return NULL if key not found
+	inline Value* property_get(const Value& key) {
+		dynamic_map::iterator it;
 
 		if ((it = this->props.find(key)) != this->props.cend()) {
-			return it->second;
+			return &it->second;
 		}
-
-		return this->prototype ? this->prototype->get(key, vm) : Value();
+		else if (this->prototype) {
+			return this->prototype->property_get(key);
+		}
+		else {
+			return NULL;
+		}
 	}
-
-	virtual void set(const Value& key, const Value& value) {
+	// Set property of object
+	inline void property_set(const Value& key, const Value& value) {
 		this->props[key] = value;
 	}
-
-	bool has(const Value& key) {
+	// Check if object has property
+	inline bool property_has(const Value& key) {
 		Object* ptr = this;
 		do {
 			if (ptr->props.count(key))
@@ -92,21 +157,34 @@ public:
 		return false;
 	}
 
+	virtual Value get(const Value& key, VM* vm) {
+		auto propVPtr = property_get(key);
+		return propVPtr ? *propVPtr : vm->pool->ValueConstNull;
+	}
+	virtual void set(const Value& key, const Value& value) {
+		return property_set(key, value);
+	}
+	virtual bool has(const Value& key) {
+		return property_has(key);
+	}
+
 	constexpr size_t obj_size() const noexcept;
 
 	virtual Object* obj_copy() const {
 		return new Object(*this);
 	}
 
-	template <typename T, typename... Args>
-	T* create_copy(Args... args) const {
-		auto obj = new T(args...);
-		//this->copy_properties(this->props, obj->props);
-		return obj;
-	}
-
 	virtual void print() {
 		printf("<%s object>", this->name);
+	}
+	virtual void print_leaf() {
+		Object::print();
+	}
+	virtual string repr(VM* vm) {
+		return string("<") + this->name + " object>";
+	}
+	virtual string repr_leaf(VM* vm) {
+		return Object::repr(vm);
 	}
 
 	virtual constexpr size_t _talloc_size() const noexcept {
@@ -115,8 +193,12 @@ public:
 
 	static NATIVE_FN_SIG(copy);
 	static NATIVE_FN_SIG(has);
+	static NATIVE_FN_SIG(size);
+	static NATIVE_FN_SIG(keys);
+	static NATIVE_FN_SIG(values);
+	static NATIVE_FN_SIG(items);
+	static NATIVE_FN_SIG(extendby);
 };
-
 class FrozenObject : public Object {
 public:
 	FrozenObject() {
@@ -126,7 +208,7 @@ public:
 		type = OBJECT_FROZEN;
 		name = name;
 	}
-	FrozenObject(const char* name, const property_map& properties) {
+	FrozenObject(const char* name, const dynamic_map& properties) {
 		type = OBJECT_FROZEN;
 		name = name;
 		props = properties;
@@ -137,30 +219,166 @@ public:
 	virtual void print() {
 		printf("<%s (frozen)object>", this->name);
 	}
+	string repr(VM* vm) override {
+		string r("{");
+
+		switch (props.size()) {
+		case 0:
+			break;
+		case 1: {
+			const auto& pr = *props.begin();
+			r.append(TValue::repr_leaf(pr.first, vm));
+			r.append(": ");
+			r.append(TValue::repr_leaf(pr.second, vm));
+			break;
+		}
+		default: {
+			auto ptr = props.begin(), eptr = props.end();
+			r.append(TValue::repr_leaf(ptr->first, vm));
+			r.append(": ");
+			r.append(TValue::repr_leaf(ptr->second, vm));
+
+			while (++ptr != eptr) {
+				r.append(", ");
+				r.append(TValue::repr_leaf(ptr->first, vm));
+				r.append(": ");
+				r.append(TValue::repr_leaf(ptr->second, vm));
+			}
+			break;
+		}
+		}
+
+		r.push_back('}');
+
+		return r;
+	}
 
 	Object* obj_copy() const override {
 		return new FrozenObject(*this);
 	}
 };
 
-class StringObject : public Object {
+class PureObjectIterable {
+public:
+	Object* obj;
+
+	PureObjectIterable(Object* obj) : obj(obj) {}
+	PureObjectIterable(const Object* obj) : obj((Object*)obj) {}
+
+	auto begin() const noexcept {
+		return obj->props.begin();
+	}
+
+	auto end() const noexcept {
+		return obj->props.end();
+	}
+};
+
+// Special abstract object type that supports iterating through itself
+template <typename T>
+class IterableSpecie : public Object {
+public:
+	IterableSpecie() {
+		OBJECT_FLAG_ITERABLE(this);
+	}
+
+	virtual T iter_begin() const noexcept = 0;
+	virtual T iter_end() const noexcept = 0;
+	virtual inline size_t iter_size() const noexcept {
+		return UNSIZED_ITERABLE;
+	}
+
+	struct iterator {
+		IterableSpecie* spec;
+
+		iterator(IterableSpecie* spec) : spec(spec) {}
+		iterator(const IterableSpecie* spec) : spec((IterableSpecie*)spec) {}
+
+		T begin() const noexcept {
+			return spec->iter_begin();
+		}
+
+		T end() const noexcept {
+			return spec->iter_end();
+		}
+	};
+
+	iterator get_iterator() const noexcept {
+		return IterableSpecie::iterator(this);
+	}
+};
+
+class IterationObject {
+public:
+	RolIteratorBase* b = NULL;
+
+	ObjectType type = OBJECT_ITERATION; // addr of type flag is +0x8 relative to the object addr
+
+	RolIteratorBase* e = NULL;
+
+	IterationObject(const RolIterable& rolit) {
+		const size_t it_size = rolit.begin().it_size;
+
+		b = (RolIteratorBase*)malloc(it_size);
+		if (!b) throw exception();
+		memcpy(b, rolit.begin().it, it_size);
+
+		e = (RolIteratorBase*)malloc(it_size);
+		if (!e) throw exception();
+		memcpy(e, rolit.end().it, it_size);
+	}
+};
+
+class IterableObject : public IterableSpecie<RolIterator> {
+public:
+	RolIterable rol_it;
+	
+	RolIterator iter_begin() const noexcept override {
+		return rol_it.begin();
+	}
+	RolIterator iter_end() const noexcept override {
+		return rol_it.end();
+	}
+
+	IterableObject(const RolIterable& rolit, ValuePool* pool) : rol_it(rolit) {
+		this->type = OBJECT_ITERABLE;
+		this->name = "Iterable";
+
+		Object::property_set(toValue(pool->finishedString), false);
+	}
+	~IterableObject() override {}
+
+	void set(const Value& key, const Value& value) override {}
+
+	static NATIVE_FN_SIG(next);
+	static NATIVE_FN_SIG(feed);
+};
+
+class StringObject : public IterableSpecie<rol_string_iterator> {
 public:
 	string content;
+
+	rol_string_iterator iter_begin() const noexcept override {
+		return content.begin();
+	}
+
+	rol_string_iterator iter_end() const noexcept override {
+		return content.end();
+	}
+
+	inline size_t iter_size() const noexcept override {
+		return content.size();
+	}
 
 	StringObject(const char* data) : content(data) {
 		this->type = OBJECT_STRING;
 		this->name = "String";
 
-		content.shrink_to_fit();
-		Object::set(ValuePool::getLengthStr(), Value((double)content.size()));
+		if (auto lengthStr = ValuePool::getLengthStr()) {
+			Object::property_set(toValue(lengthStr), Value((double)content.size()));
+		}
 	}
-	StringObject(const string str) : content(str) {
-		this->type = OBJECT_STRING;
-		this->name = "String";
-
-		content.shrink_to_fit();
-		Object::set(ValuePool::getLengthStr(), Value((double)content.size()));
-	}
+	StringObject(const string str) : StringObject(str.c_str()) {}
 
 	~StringObject() override {}
 
@@ -177,6 +395,18 @@ public:
 
 	void print() override {
 		printf("%s", content.c_str());
+	}
+	void print_leaf() override {
+		printf("%s", repr_leaf(NULL).c_str());
+	}
+	string repr(VM* vm) override {
+		string r("'");
+		Token::stringToRepr(content, r);
+		r.push_back('\'');
+		return r;
+	}
+	virtual string repr_leaf(VM* vm) {
+		return repr(vm);
 	}
 
 	constexpr size_t _talloc_size() const noexcept override {
@@ -203,11 +433,10 @@ public:
 
 class UpvalueObject : public Object {
 public:
-	int capture_pos;
 	Value* location;
 	Value closed;
 
-	UpvalueObject(Value* loc, int capture_pos) : location(loc), capture_pos(capture_pos) {
+	UpvalueObject(Value* loc) : location(loc) {
 		this->name = "Upvalue";
 		this->type = OBJECT_UPVALUE;
 	}
@@ -217,95 +446,199 @@ public:
 	}
 };
 
-class FunctionObject : public Object {
+// A specie of callable objects
+class CallableSpecie : public Object {
 public:
-	string fnname;
-	Chunk* chunk;
-	int arity, upvalue_count;
+	virtual constexpr const char* getFuncName() const noexcept = 0;
+	virtual constexpr Chunk* getChunk() const noexcept = 0;
 
-	FunctionObject(const string& name, Chunk* chunk, int arity) : fnname(name), chunk(chunk), arity(arity), upvalue_count(0) {
+	constexpr vector<Value>& getConsts() noexcept;
+	constexpr vector<uint8_t>& getOPs() noexcept;
+	constexpr ValuePool* getPool() const noexcept;
+	virtual constexpr int countUpvalues() const noexcept {
+		return 0;
+	}
+	virtual constexpr int getArity() const noexcept {
+		return INT32_MAX;
+	}
+};
+
+class FunctionObject : public CallableSpecie {
+public:
+	const char* fnname;
+	Chunk* chunk;
+	chunk_size arity, upvalue_count = 0;
+	bool is_generator = false;
+
+	FunctionObject(const char* name, Chunk* chunk, chunk_size arity) : chunk(chunk), arity(arity) {
+
 		this->name = "Function";
 		this->type = OBJECT_FUNCTION;
 
-		if (name.empty()) {
-			this->fnname = "(anonymous)";
+		if (!*name) {
+			fnname = "(anonymous)";
+		}
+		else {
+			size_t _s = strlen(name);
+			fnname = new char[_s + 1];
+			memcpy((void*)fnname, name, _s);
+			((char*)fnname)[_s] = '\0';
 		}
 	}
 
-	void print() override {
-		printf("<%s function>", this->fnname.c_str());
+	~FunctionObject() override {
+		delete[] fnname;
 	}
 
-	Object* obj_copy() const override;
-};
+	void print() override {
+		printf("<%s function>", this->fnname);
+	}
+	void print_leaf() override {
+		FunctionObject::print();
+	}
+	string repr(VM* vm) override {
+		return string("<") + this->fnname + " function>";
+	}
+	string repr_leaf(VM* vm) override {
+		return FunctionObject::repr(vm);
+	}
 
-class BoundFunctionObject : public Object {
+	Object* obj_copy() const override {
+		return new FunctionObject(*this);
+	}
+
+	size_t _talloc_size() const noexcept override;
+
+
+	// Callable specie characteristics
+
+	constexpr const char* getFuncName() const noexcept {
+		return this->fnname;
+	}
+	constexpr Chunk* getChunk() const noexcept {
+		return this->chunk;
+	}
+	constexpr int countUpvalues() const noexcept override {
+		return this->upvalue_count;
+	}
+	constexpr int getArity() const noexcept override {
+		return this->arity;
+	}
+
+	static NATIVE_FN_SIG(name);
+	static NATIVE_FN_SIG(arity);
+	static NATIVE_FN_SIG(bind);
+	static NATIVE_FN_SIG(invoke);
+	static NATIVE_FN_SIG(apply);
+};
+class BoundFunctionObject : public CallableSpecie {
 public:
-	Object* function;
+	CallableSpecie* function;
 	Value thisValue;
 
-	BoundFunctionObject(Object* function, const Value& thisValue) : function(function), thisValue(thisValue) {
+	BoundFunctionObject(CallableSpecie* function, const Value& thisValue) : function(function), thisValue(thisValue) {
 		this->type = OBJECT_BOUND_FUNCTION;
 		this->name = "BoundFunction";
+	}
+
+	constexpr const char* getFuncName() const noexcept {
+		return function->getFuncName();
+	}
+	constexpr Chunk* getChunk() const noexcept {
+		return function->getChunk();
+	}
+	constexpr int countUpvalues() const noexcept override {
+		return function->countUpvalues();
+	}
+	constexpr int getArity() const noexcept override {
+		return function->getArity();
 	}
 
 	Object* obj_copy() const override {
 		return new BoundFunctionObject(*this);
 	}
 };
-
-class NativeFunctionObject : public Object {
+class NativeFunctionObject : public CallableSpecie {
 public:
 	typedef void (*fntype)NATIVE_FN_ARG_SIG;
 	fntype function;
+	const char* fnname;
 
-	NativeFunctionObject(const fntype& function) : function(function) {
+	NativeFunctionObject(const fntype& function, const char* fnname) : function(function), fnname(fnname) {
 		this->type = OBJECT_NATIVE_FUNCTION;
 		this->name = "NativeFunction";
 	}
 
 	~NativeFunctionObject() override {}
 
+	constexpr const char* getFuncName() const noexcept {
+		return fnname;
+	}
+	constexpr Chunk* getChunk() const noexcept {
+		return NULL;
+	}
+
 	Object* obj_copy() const override {
 		return new NativeFunctionObject(*this);
 	}
 };
-
-// bind function
-NATIVE_FN_SIG(function_bind);
-NATIVE_FN_SIG(function_arity);
-NATIVE_FN_SIG(function_invoke);
-NATIVE_FN_SIG(function_apply);
-
-class ClosureObject : public Object {
+class ClosureObject : public CallableSpecie {
 public:
-	FunctionObject* function;
+	CallableSpecie* function;
 	UpvalueObject** upvalues;
 	int upvalue_count;
+	bool is_generator = false;
 
-	ClosureObject(FunctionObject* function) : function(function) {
+	ClosureObject(int upvalue_count) : upvalue_count(upvalue_count) {
 		this->name = "Closure";
 		this->type = OBJECT_CLOSURE;
 
-		UpvalueObject** upvalues = new UpvalueObject*[function->upvalue_count];
-		memset(upvalues, NULL, base_type<decltype(upvalues)>::size * function->upvalue_count);
+		UpvalueObject** upvalues = new UpvalueObject*[upvalue_count];
+		memset(upvalues, NULL, VAR_SIZET(upvalues) * upvalue_count);
 
 		this->upvalues = upvalues;
-		this->upvalue_count = function->upvalue_count;
+		this->upvalue_count = upvalue_count;
+	}
+
+	ClosureObject(FunctionObject* function) : ClosureObject(function->countUpvalues()) {
+		this->function = function;
+		this->is_generator = function->is_generator;
 	}
 
 	void print() override {
-		this->function->print();
+		function->print();
+	}
+	void print_leaf() override {
+		function->print_leaf();
+	}
+	string repr(VM* vm) override {
+		return function->repr(vm);
+	}
+	string repr_leaf(VM* vm) override {
+		return function->repr_leaf(vm);
 	}
 
 	constexpr size_t _talloc_size() const noexcept override {
-		return base_type<decltype(upvalues)>::size * this->upvalue_count;
+		return sizet_of<decltype(upvalues)> * this->upvalue_count;
+	}
+
+	constexpr const char* getFuncName() const noexcept {
+		return function->getFuncName();
+	}
+	constexpr Chunk* getChunk() const noexcept {
+		return function->getChunk();
+	}
+	constexpr int countUpvalues() const noexcept override {
+		return function->countUpvalues();
+	}
+	constexpr int getArity() const noexcept override {
+		return function->getArity();
 	}
 
 	Object* obj_copy() const override {
 		auto obj = new ClosureObject(*this);
 		obj->upvalues = new UpvalueObject * [this->upvalue_count];
-		memcpy(obj->upvalues, this->upvalues, base_type<decltype(upvalues)>::size * this->upvalue_count);
+		memcpy(obj->upvalues, this->upvalues, sizet_of<decltype(upvalues)> *this->upvalue_count);
 		return obj;
 	}
 
@@ -314,25 +647,21 @@ public:
 	}
 };
 
-//class IterableSpecieObject : public Object {
-//	IterableSpecieObject() {
-//		this->type = OBJECT_ITERABLE_SPECIE;
-//	}
-//
-//	virtual constexpr Value* begin() const noexcept = 0;
-//	virtual constexpr Value* end() const noexcept = 0;
-//};
 
-class ListObject : public Object {
+class ListObject : public IterableSpecie<Value*> {
 public:
 	vector<Value> list;
-	
-	constexpr vector<Value>::iterator begin() noexcept {
-		return list.begin();
+
+	Value* iter_begin() const noexcept override {
+		return (Value*)&list.front();
 	}
 
-	constexpr vector<Value>::iterator end() noexcept {
-		return list.end();
+	Value* iter_end() const noexcept override {
+		return (Value*)&list.back() + 1;
+	}
+
+	inline size_t iter_size() const noexcept override {
+		return list.size();
 	}
 
 	ListObject() {
@@ -367,7 +696,7 @@ public:
 			if (num >= 0 && num < list.size()) {
 				return list[(size_t)num];
 			}
-			return Value();
+			return NULL_VAL;
 		}
 
 		return Object::get(key, vm);
@@ -392,21 +721,46 @@ public:
 			return;
 		case 1:
 			printf("[");
-			list[0].print();
+			TValue::print_leaf(list[0]);
 			printf("]");
 			return;
 		default: {
-			auto ptr = list.begin();
+			auto ptr = list.begin(), eptr = list.end();
 			printf("[");
-			ptr->print();
-			while (++ptr != list.end()) {
+			TValue::print_leaf(*ptr);
+			while (++ptr != eptr) {
 				printf(", ");
-				ptr->print();
+				TValue::print_leaf(*ptr);
 			}
 			printf("]");
 			return;
 		}
 		}
+	}
+	string repr(VM* vm) override {
+		string r("[");
+
+		switch (list.size()) {
+		case 0:
+			r.push_back(']');
+			break;
+		case 1:
+			r.append(TValue::repr_leaf(list[0], vm));
+			r.push_back(']');
+			break;
+		default: {
+			auto ptr = list.begin(), eptr = list.end();
+			r.append(TValue::repr_leaf(*ptr, vm));
+			while (++ptr != eptr) {
+				r.append(", ");
+				r.append(TValue::repr_leaf(*ptr, vm));
+			}
+			r.push_back(']');
+			break;
+		}
+		}
+
+		return r;
 	}
 
 	Object* obj_copy() const override {
@@ -416,11 +770,18 @@ public:
 	static NATIVE_FN_SIG(list_size);
 
 	static NATIVE_FN_SIG(list_push);
+	static NATIVE_FN_SIG(list_insert);
+	static NATIVE_FN_SIG(list_extend);
+	static NATIVE_FN_SIG(list_extend_at);
+
 	static NATIVE_FN_SIG(list_pop);
+	static NATIVE_FN_SIG(list_remove);
+
 	static NATIVE_FN_SIG(list_swap);
 	static NATIVE_FN_SIG(list_clear);
 
 	static NATIVE_FN_SIG(list_find);
+	static NATIVE_FN_SIG(list_findsub);
 	static NATIVE_FN_SIG(list_count);
 	static NATIVE_FN_SIG(list_any);
 	static NATIVE_FN_SIG(list_all);
@@ -436,20 +797,25 @@ public:
 	static NATIVE_FN_SIG(list_sort);
 	static NATIVE_FN_SIG(list_reverse);
 	static NATIVE_FN_SIG(list_shuffle);
+
+	static NATIVE_FN_SIG(list_sub);
+	static NATIVE_FN_SIG(list_cycle);
 };
-
-
-class TupleObject : public Object {
+class TupleObject : public IterableSpecie<Value*> {
 public:
 	Value* list = NULL;
 	size_t size = 0;
 
-	constexpr Value* begin() const noexcept {
+	Value* iter_begin() const noexcept override {
 		return list;
 	}
 
-	constexpr Value* end() const noexcept {
+	Value* iter_end() const noexcept override {
 		return list + size;
+	}
+
+	inline size_t iter_size() const noexcept override {
+		return size;
 	}
 
 	TupleObject() {
@@ -457,22 +823,22 @@ public:
 		this->name = "Tuple";
 	}
 
-	TupleObject(Value* start_ptr, size_t length) : size(length) {
-		this->type = OBJECT_TUPLE;
-		this->name = "Tuple";
+	TupleObject(size_t length) : TupleObject() {
+		list = new Value[size = length];
+	}
 
-		list = new Value[length];
-		memcpy(list, start_ptr, length * base_type<decltype(list)>::size);
+	TupleObject(Value* start_ptr, size_t length) : TupleObject(length) {
+		memcpy(list, start_ptr, size * sizet_of<decltype(list)>);
 	}
 
 	~TupleObject() override {
 		if (list) {
-			delete[] this->list;
+			delete[] list;
 		}
 	}
 
 	constexpr size_t _talloc_size() const noexcept override {
-		return size * base_type<decltype(list)>::size;
+		return size * sizet_of<decltype(list)>;
 	}
 
 	Value get(const Value& key, VM* vm) override {
@@ -481,7 +847,7 @@ public:
 			if (num >= 0 && num < size) {
 				return *(list + (size_t)num);
 			}
-			return Value();
+			return NULL_VAL;
 		}
 
 		return Object::get(key, vm);
@@ -496,28 +862,58 @@ public:
 			return;
 		case 1:
 			printf("(");
-			list[0].print();
+			TValue::print_leaf(*list);
 			printf(",)");
 			return;
 		default: {
-			auto ptr = list;
+			auto ptr = list, eptr = list + size;
 			printf("(");
-			ptr->print();
-			while (++ptr != list + size) {
+			TValue::print_leaf(*ptr);
+			while (++ptr != eptr) {
 				printf(", ");
-				ptr->print();
+				TValue::print_leaf(*ptr);
 			}
 			printf(")");
 			return;
 		}
 		}
 	}
+	string repr(VM* vm) override {
+		string r("(");
+
+		switch (size) {
+		case 0:
+			r.push_back(')');
+			break;
+		case 1:
+			r.append(TValue::repr_leaf(*list, vm));
+			r.append(",)");
+			break;
+		default: {
+			auto ptr = list, eptr = list + size;
+			r.append(TValue::repr_leaf(*ptr, vm));
+			while (++ptr != eptr) {
+				r.append(", ");
+				r.append(TValue::repr_leaf(*ptr, vm));
+			}
+			r.push_back(')');
+			break;
+		}
+		}
+
+		return r;
+	}
 
 	Object* obj_copy() const override {
 		auto obj = new TupleObject(*this);
-		obj->list = new Value[this->size];
-		memcpy(obj->list, this->list, sizeof(Value) * this->size);
+		obj->list = new Value[size];
+		memcpy(obj->list, list, sizet_of<decltype(list)> * size);
 		return obj;
+	}
+
+	void resize(const size_t& size) {
+		this->size = size;
+		list = REALLOCATE(list, size);
 	}
 
 	static NATIVE_FN_SIG(tuple_size);
@@ -531,35 +927,184 @@ public:
 	static NATIVE_FN_SIG(tuple_map);
 	static NATIVE_FN_SIG(tuple_accumulate);
 };
+class SetObject : public IterableSpecie<rol_set_iterator> {
+public:
+	rol_set_container values;
+
+	rol_set_iterator iter_begin() const noexcept override {
+		return values.begin();
+	}
+
+	rol_set_iterator iter_end() const noexcept override {
+		return values.end();
+	}
+
+	inline size_t iter_size() const noexcept override {
+		return values.size();
+	}
+
+	SetObject() {
+		this->type = OBJECT_SET;
+		this->name = "Set";
+	}
+	SetObject(const rol_set_container& set) : values(set) {
+		SetObject::SetObject();
+	}
+	SetObject(Value* list, size_t length) : SetObject() {
+		values.insert(list, list + length);
+	}
+
+	size_t size() const noexcept {
+		return values.size();
+	}
+
+	void set(const Value& key, const Value& value) override {}
+
+	size_t _talloc_size() const noexcept override {
+		return values.size() * sizet_of<decltype(values)::node_type>;
+	}
+
+	Object* obj_copy() const noexcept {
+		return new SetObject(*this);
+	}
+
+	void print() override {
+		switch (size()) {
+		case 0:
+			printf("{}");
+			return;
+		case 1:
+			printf("{");
+			TValue::print_leaf(*values.begin());
+			printf("}");
+			return;
+		default: {
+			auto ptr = values.begin(), eptr = values.end();
+			printf("{");
+			TValue::print_leaf(*ptr);
+			while (++ptr != eptr) {
+				printf(", ");
+				TValue::print_leaf(*ptr);
+			}
+			printf("}");
+			return;
+		}
+		}
+	}
+	string repr(VM* vm) override {
+		string r("{");
+
+		switch (size()) {
+		case 0:
+			r.push_back('}');
+			break;
+		case 1:
+			r.append(TValue::repr_leaf(*values.begin(), vm));
+			r.push_back('}');
+			break;
+		default: {
+			auto ptr = values.begin(), eptr = values.end();
+			r.append(TValue::repr_leaf(*ptr, vm));
+			while (++ptr != eptr) {
+				r.append(", ");
+				r.append(TValue::repr_leaf(*ptr, vm));
+			}
+			r.push_back('}');
+			break;
+		}
+		}
+
+		return r;
+	}
+
+	static NATIVE_FN_SIG(set_has);
+	static NATIVE_FN_SIG(set_size);
+
+	static NATIVE_FN_SIG(set_add);
+	static NATIVE_FN_SIG(set_extend);
+
+	static NATIVE_FN_SIG(set_pop);
+	static NATIVE_FN_SIG(set_remove);
+	static NATIVE_FN_SIG(set_discard_intersection);
+
+	static NATIVE_FN_SIG(set_union);
+	static NATIVE_FN_SIG(set_difference);
+	static NATIVE_FN_SIG(set_intersection);
+
+	static NATIVE_FN_SIG(set_issuperset);
+	static NATIVE_FN_SIG(set_isdisjoint);
+	static NATIVE_FN_SIG(set_issubset);
+};
 
 
 class ExceptionObject : public Object {
 public:
+	static constexpr const char* getExceptionName(const ExceptionType& exc_type) noexcept {
+		switch (exc_type) {
+		case EXCEPT_GENERAL_ERROR:
+			return "Exception";
+		case EXCEPT_RAISED_ERROR:
+			return "UncatchedException";
+		case EXCEPT_TYPE_ERROR:
+			return "TypeErrorException";
+		case EXCEPT_INTERNAL_ERROR:
+			return "InternalException";
+		default:
+			return "UnknownException";
+		}
+	}
+
+	static constexpr const char* getExceptionMessage(const ExceptionType& exc_type) noexcept {
+		switch (exc_type) {
+		case EXCEPT_GENERAL_ERROR:
+			return "An error occurred";
+		case EXCEPT_RAISED_ERROR:
+			return "A value was raised but remain uncatched";
+		case EXCEPT_INTERNAL_ERROR:
+			return "An internal error occurred";
+		default:
+			return "<no_description>";
+		}
+	}
+
 	const char* msg;
-	vector<const char*> callframe_names;
+	const char** callframe_names;
+	size_t callframe_count;
+	ExceptionType exc_type;
 
 	ExceptionObject() {}
 
-	ExceptionObject(const char* msg, const vector<const char*>& callframe_names) : msg(msg), callframe_names(callframe_names) {
-		this->name = "Exception";
+	ExceptionObject(
+		const char* msg,
+		ExceptionType exc_type,
+		const vector<const char*>& callframe_names
+	) : exc_type(exc_type) {
+
+		this->name = ExceptionObject::getExceptionName(exc_type);
 		this->type = OBJECT_EXCEPTION;
+
+		this->msg = msg ? msg : ExceptionObject::getExceptionMessage(exc_type);
+		this->callframe_names = new const char* [callframe_count = callframe_names.size()];
+		memcpy(this->callframe_names, callframe_names.data(), callframe_count * 8);
 	}
 
-	~ExceptionObject() override {}
+	~ExceptionObject() override {
+		delete[] this->callframe_names;
+	}
 
-	void print_CallFrames() {
-		for (int i = 0, len = callframe_names.size(); i < len; ++i) {
-			printf(i != len - 1 ? "In [%s],\n" : "In [%s]\n\n", callframe_names[i]);
+	const void inline print_CallFrames() const noexcept {
+		for (int i = 0; i < callframe_count; ++i) {
+			printf(i != callframe_count - 1 ? "In [%s],\n" : "In [%s]\n\n", callframe_names[i]);
 		}
 	}
 
 	virtual void print() override {
-		printf("%s: %s\n\n", this->name, msg);
 		print_CallFrames();
+		printf("%s: %s\n\n", this->name, msg);
 	}
 
 	constexpr size_t _talloc_size() const noexcept override {
-		return callframe_names.capacity() * sizeof(decltype(callframe_names)::value_type);
+		return callframe_count * 8;
 	}
 
 	Object* obj_copy() const override {
@@ -567,65 +1112,13 @@ public:
 	}
 };
 
-class RaisedExceptionObject : public ExceptionObject {
-public:
-	Value throwValue;
-
-	RaisedExceptionObject(const Value& v, const vector<const char*>& callframe_names) : throwValue(v) {
-		this->callframe_names = callframe_names;
-		this->name = "RaiseException";
-		this->type = OBJECT_RAISED_EXCEPTION;
-	}
-
-	virtual void print() override {
-		printf("%s: Value ", this->name);
-		this->throwValue.print();
-		printf(" was thrown but uncatched\n\n");
-
-		ExceptionObject::print_CallFrames();
-	}
-
-	Object* obj_copy() const override {
-		return new RaisedExceptionObject(*this);
-	}
-};
-
-class TypeErrorObject : public ExceptionObject {
-public:
-	TypeErrorObject(const char* msg, const vector<const char*>& callframe_names) {
-		this->callframe_names = callframe_names;
-		this->msg = msg;
-
-		this->name = "TypeError";
-		this->type = OBJECT_TYPE_ERROR;
-	}
-
-	Object* obj_copy() const override {
-		return new TypeErrorObject(*this);
-	}
-};
-
-class InternalErrorObject : public ExceptionObject {
-public:
-	InternalErrorObject(const char* msg, const vector<const char*>& callframe_names) {
-		this->callframe_names = callframe_names;
-		this->msg = msg;
-
-		this->name = "TypeError";
-		this->type = OBJECT_INTERNAL_ERROR;
-	}
-
-	Object* obj_copy() const override {
-		return new InternalErrorObject(*this);
-	}
-};
-
-
 
 constexpr size_t Object::obj_size() const noexcept {
 	switch (this->type) {
 	case OBJECT_OBJECT:
 		return sizeof(Object);
+	case OBJECT_ITERABLE:
+		return sizeof(IterableObject);
 	case OBJECT_FUNCTION:
 		return sizeof(FunctionObject);
 	case OBJECT_CLOSURE:
@@ -640,19 +1133,15 @@ constexpr size_t Object::obj_size() const noexcept {
 		return sizeof(ListObject);
 	case OBJECT_TUPLE:
 		return sizeof(TupleObject);
+	case OBJECT_SET:
+		return sizeof(SetObject);
 	case OBJECT_BOUND_FUNCTION:
 		return sizeof(BoundFunctionObject);
 	case OBJECT_FROZEN:
 		return sizeof(FrozenObject);
 	case OBJECT_EXCEPTION:
 		return sizeof(ExceptionObject);
-	case OBJECT_INTERNAL_ERROR:
-		return sizeof(InternalErrorObject);
-	case OBJECT_TYPE_ERROR:
-		return sizeof(TypeErrorObject);
-	case OBJECT_RAISED_EXCEPTION:
-		return sizeof(RaisedExceptionObject);
 	default:
-		throw exception("Unsupported object type");
+		return UINT64_MAX;
 	}
 }

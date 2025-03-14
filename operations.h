@@ -1,9 +1,10 @@
 #pragma once
 #include <stdint.h>
+#include "common.h"
 
 enum OP {
 	// Stack mutating
-	OP_CONST, OP_OBJECT_CONST, OP_TRUE, OP_FALSE, OP_NULL, OP_SET, OP_COPY, OP_POP,
+	OP_CONST, OP_OBJECT_CONST, OP_LIST_FROM_CONST_TUPLE, OP_TRUE, OP_FALSE, OP_NULL, OP_SET, OP_COPY, OP_POP,
 	// Unary operations
 	OP_NOT, OP_NEGATE, OP_INCREASE, OP_DECREASE,
 	// Math operations
@@ -11,7 +12,10 @@ enum OP {
 	// Comparison
 	OP_LESS, OP_GREATER, OP_LESS_EQUAL, OP_GREATER_EQUAL, OP_EQUAL, OP_NOT_EQUAL,
 	// Altering execution order
-	OP_GOTO, OP_GOTO_IF_FALSE, OP_GOTO_IF_TRUE,
+	OP_GOTO, OP_GOTO_IF_FALSE, OP_GOTO_IF_TRUE, OP_GOTO_SET_STACK,
+	OP_POP_GOTO_IF_FALSE,
+	// Iterator
+	OP_ITER, OP_ITER_NEXT, OP_ITER_END,
 	// Functional operations
 	OP_PRINT, OP_IS_PROTOTYPE,
 	// Upvalue operations
@@ -21,7 +25,8 @@ enum OP {
 	// Objects
 	OP_MEM_GET, OP_MEM_SET,
 	// Generators
-	OP_GEN_OBJ, OP_GEN_LIST, OP_GEN_TUPLE, OP_LIST_FROM_CONST_TUPLE,
+	OP_GEN_OBJ, OP_GEN_LIST, OP_GEN_TUPLE,
+	OP_YIELD,
 	// Try catch
 	OP_FLAG_CATCH, OP_UNFLAG_CATCH, OP_RAISE,
 	// Ends
@@ -30,10 +35,10 @@ enum OP {
 
 struct Operation {
 	OP type;
-	uint8_t* arg;
+	bytecode* arg;
 	int arg_count;
 
-	Operation(OP type, uint8_t* arg, int arg_count) : type(type), arg(arg), arg_count(arg_count) {}
+	Operation(OP type, bytecode* arg, int arg_count) : type(type), arg(arg), arg_count(arg_count) {}
 
 	constexpr bool operator==(const Operation& op) const noexcept {
 		if (this->type != op.type || this->arg_count != op.arg_count) {
@@ -117,8 +122,19 @@ struct Operation {
 			return "OP_GOTO";
 		case OP_GOTO_IF_FALSE:
 			return "OP_GOTO_IF_FALSE";
+		case OP_POP_GOTO_IF_FALSE:
+			return "OP_POP_GOTO_IF_FALSE";
 		case OP_GOTO_IF_TRUE:
 			return "OP_GOTO_IF_TRUE";
+		case OP_GOTO_SET_STACK:
+			return "OP_GOTO_SET_STACK";
+
+		case OP_ITER:
+			return "OP_ITER";
+		case OP_ITER_NEXT:
+			return "OP_ITER_NEXT";
+		case OP_ITER_END:
+			return "OP_ITER_END";
 
 		case OP_PRINT:
 			return "OP_PRINT";
@@ -162,6 +178,8 @@ struct Operation {
 		case OP_RAISE:
 			return "OP_RAISE";
 
+		case OP_YIELD:
+			return "OP_YIELD";
 		case OP_RETURN:
 			return "OP_RETURN";
 

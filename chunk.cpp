@@ -5,21 +5,20 @@
 using namespace std;
 
 size_t Chunk::addConst(const string& str) {
-	StringObject* stri = this->pool->internString(str);
-	if (this->string_consts.find(stri) != this->string_consts.end()) {
-		return this->string_consts[stri];
+	StringObject* stri = this->pool->internStr(str);
+	if (hub->hasString(stri)) {
+		return hub->getString(stri);
 	}
-	this->consts.emplace_back(stri);
-	return this->string_consts[stri] = this->consts.size() - 1;
+	this->consts.emplace_back(toValue(stri));
+	return hub->getString(stri) = this->consts.size() - 1;
 }
-
 size_t Chunk::addConst(const double& number) {
-	Value* num = this->pool->fromDouble(number);
-	if (this->number_consts.find(num) != this->number_consts.end()) {
-		return this->number_consts[num];
+	Value num = NUM_VAL(number);
+	if (hub->hasNumber(num)) {
+		return hub->getNumber(num);
 	}
-	this->consts.push_back(*num);
-	return this->number_consts[num] = this->consts.size() - 1;
+	this->consts.push_back(num);
+	return hub->getNumber(num) = this->consts.size() - 1;
 }
 
 size_t Chunk::addTokenConst(const Token& token) {
@@ -27,7 +26,7 @@ size_t Chunk::addTokenConst(const Token& token) {
 	case TOKEN_NUMBER:
 		return this->addConst(strtod(token.start, NULL));
 	case TOKEN_STRING:
-		return this->addConst(__tokenToString((Token*) &token));
+		return this->addConst(Token::toString((Token*) &token));
 	case TOKEN_IDENTIFIER:
 		return this->addConst(string(token.start, token.length));
 
@@ -38,13 +37,15 @@ size_t Chunk::addTokenConst(const Token& token) {
 }
 
 Chunk* Chunk::copy() {
+	throw exception("Deprecated feature");
+
 	auto chunk = new Chunk();
 	chunk->ops.insert(chunk->ops.end(), ops.begin(), ops.end());
 	chunk->consts.insert(chunk->consts.end(), consts.begin(), consts.end());
 
 	for (auto& v : chunk->consts) {
 		if (IS_OBJECT(v)) {
-			v = Value(AS_OBJECT(v)->obj_copy());
+			v = toValue(AS_OBJECT(v)->obj_copy());
 		}
 	}
 
@@ -56,7 +57,7 @@ void Chunk::print() {
 
 #define READ_USHORT(o) ((((chunk_size)*(o++)) << 8) + *(o++))
 #define READ_UCHAR(o) (*(o++))
-#define GET_USHORT(o) ((((chunk_size)*o) << 8) + *(o + 1))
+#define GET_USHORT(o) ((((chunk_size)*(o)) << 8) + *((o) + 1))
 
 	printf("========================================================\n\n");
 
@@ -80,7 +81,7 @@ void Chunk::print() {
 				if (IS_STRINGOBJ(constVal)) {
 					printf("'");
 				}
-				constVal.print();
+				TValue::print(constVal);
 				if (IS_STRINGOBJ(constVal)) {
 					printf("'");
 				}
@@ -92,7 +93,7 @@ void Chunk::print() {
 				unsigned short pos = GET_USHORT(op.arg);
 
 				printf("%s    %d -> ", op.name(), pos);
-				this->consts[pos].print();
+				TValue::print(this->consts[pos]);
 				printf("\n");
 				break;
 			}
@@ -103,6 +104,19 @@ void Chunk::print() {
 				break;
 			default:
 				printf("%s    %d\n", op.name(), GET_USHORT(op.arg));
+				break;
+			}
+			break;
+		case 4:
+			switch (op.type) {
+			case OP_ITER:
+				printf("%s    %d  ->  %d\n", op.name(), GET_USHORT(op.arg), GET_USHORT(op.arg + 2));
+				break;
+			case OP_GOTO_SET_STACK:
+				printf("%s  ->  %d    %d\n", op.name(), GET_USHORT(op.arg), GET_USHORT(op.arg + 2));
+				break;
+			default:
+				printf("UNKNOWN\n");
 				break;
 			}
 			break;
@@ -145,11 +159,18 @@ void OperationIterator::transform() {
 
 	bool run = true;
 
-	uint8_t* ops = &chunk.getOPs()[0], * start = ops, * end = ops + chunk.length();
+	bytecode* ops = &chunk.getOPs()[0], * start = ops, * end = ops + chunk.length();
 	OP current;
 
 	while (ops != end) {
 		switch (current = (OP)*ops++) {
+
+			// Quadratic op
+		case OP_ITER:
+		case OP_GOTO_SET_STACK:
+			this->markOperation(current, ops, 4);
+			NEXT(ops, 4);
+			break;
 
 			// Double args
 		case OP_CALL:
@@ -177,7 +198,7 @@ void OperationIterator::transform() {
 			break;
 
 		case OP_CLOSURE: {
-			uint8_t* start = ops;
+			bytecode* start = ops;
 			auto x = AS_TOBJECT(chunk.getConsts()[READ_DOUBLE(ops)], FunctionObject);
 			NEXT(ops, 3 * x->upvalue_count);
 			this->markOperation(current, start, 2 + 3 * x->upvalue_count);
@@ -205,16 +226,19 @@ void OperationIterator::transform() {
 		case OP_FALSE:
 		case OP_PRINT:
 		case OP_RETURN:
+		case OP_YIELD:
 		case OP_MEM_SET:
 		case OP_MEM_GET:
 		case OP_NULL:
 		case OP_RAISE:
 		case OP_UNFLAG_CATCH:
-			this->markOperation(current, (uint8_t*)NULL, 0);
+		case OP_ITER_NEXT:
+		case OP_ITER_END:
+			this->markOperation(current, (bytecode*)NULL, 0);
 			break;
 
 		default:
-			printf("WARNING - In Iteration: encountered unknown operation: %d", current);
+			printf("BytecodeOptimizer <WARNING>: encountered unknown operation: %d\n", current);
 			break;
 		}
 	}

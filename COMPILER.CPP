@@ -2,31 +2,51 @@
 #include "object.h"
 #include "value.h"
 #include "common.h"
+#include "natives.h"
 #include <iostream>
 
 using namespace std;
 
-ResolveResult Compiler::addLocal(string* name) {
-	auto& it = this->bindings[this->current_scope];
-	if (it.count(*name)) {
-		throw this->error((*name + " is already defined").data());
+void Compiler::preinit() {
+	// Creates the first scope
+	this->newScope();
+	auto& uppermost_scope = this->bindings.back();
+
+	uppermost_scope[this->firstSlotName] = { this->local_count, this->local_count++, false };
+
+	if (this->parent)
+		return;
+
+	const auto& reg_names = pool->nativeBase->getNativeIDs();
+
+	// Register native names
+	for (auto& x : reg_names) {
+		uppermost_scope[x] = { this->local_count, this->local_count++, false };
 	}
-	int pos = this->local_count++;
-	it[*name] = { pos, (int)it.size(), false};
+}
+
+
+ResolveResult Compiler::addLocal(const string& name) {
+	auto& it = this->bindings[this->current_scope];
+	if (it.count(name)) {
+		throw this->error((name + " is already defined").data());
+	}
+	chunk_size pos = this->local_count++;
+	it[name] = { pos, (int)it.size(), false};
 
 	return {this, NAME_LOCAL, pos};
 }
 
 // Resolving names
-ResolveResult Compiler::resolveName(string* name) {
-	return this->resolveName(name, false);
-}
-
-ResolveResult Compiler::resolveName(string* name, bool isfrominner) {
+ResolveResult Compiler::resolveName(const string& name, bool isfrominner) {
 	for (int i = this->current_scope; i >= 0; --i) {
 		auto& nameMapping = this->bindings[i];
-		if (nameMapping.count(*name)) {
-			auto& local = nameMapping[*name];
+		if (nameMapping.count(name)) {
+			auto& local = nameMapping[name];
+
+			// If variable search began from an inner function
+			// We will mark the variable as captured
+			// So we know when to use OP_CLOSE_UPVALUE instead of OP_POP
 			if (isfrominner) {
 				local.captured = true;
 			}
@@ -34,14 +54,14 @@ ResolveResult Compiler::resolveName(string* name, bool isfrominner) {
 		}
 	}
 
-	if (this->upvalues.count(*name)) {
-		auto& upvalue = this->upvalues[*name];
+	if (this->upvalues.count(name)) {
+		auto& upvalue = this->upvalues[name];
 		return { upvalue.res.compiler, NAME_UPVALUE, upvalue.pos };
 	}
 
 	if (this->parent) {
 		ResolveResult res = this->parent->resolveName(name, true);
-		this->upvalues[*name] = { this->upvalue_count, res.position, res, res.type == NAME_LOCAL };
+		this->upvalues[name] = { this->upvalue_count, res.position, res, res.type == NAME_LOCAL };
 
 		res.position = this->upvalue_count;
 		res.type = NAME_UPVALUE;
@@ -50,9 +70,13 @@ ResolveResult Compiler::resolveName(string* name, bool isfrominner) {
 		return res;
 	}
 
-	throw this->error(("Unresolved name: " + *name).data());
+	throw this->error(("Unresolved name: " + name).data());
 }
 
+
+FunctionObject* Compiler::produceFunction(int arity) {
+	return new FunctionObject(this->name.c_str(), this->chunk, arity);
+}
 
 /// Visitors
 
@@ -75,44 +99,58 @@ FUNC_SHORTCUT(ExpressionInStatements) {
 
 // Inner functions
 
-FUNC_SHORTCUT(Func) {
-	ResolveResult res;
+pair<FunctionObject*, pair<int, bool>*> Compiler::compileInnerFunction(Stmts* stmts, const string& name, const Compiler::name_array& locals, int arity) {
+	Compiler inner((Node*)stmts, this->chunk->getPool(), this, name);
+	inner.start(locals, NULL);
 
-	if (!node->name.empty()) {
-		res = this->addLocal(&node->name);
-	}
-
-	Compiler inner((Node*)node->stmts, this->chunk->getPool(), this, node->name);
-	inner.start(node->argsname, NULL);
-
-	Code code(*inner.getChunk());
-	code.optimizeBytecode();
-
-	printf("\n");
-	this->printSignature();
-	printf("<%s function>\n", inner.name.empty() ? "(anonymous)" : inner.name.c_str());
-	code.chunk.print();
-
-	FunctionObject* obj = new FunctionObject(node->name, &code.chunk, node->arity);
+	FunctionObject* obj = inner.produceFunction(arity);
 	obj->upvalue_count = inner.getUpvalues().size();
 
-	this->chunk->argedOP(OP_CLOSURE, this->chunk->addObjectConst(obj));
+#ifdef PRINT_CHUNK_AFTER_COMPILED
+	printf("\n");
+	this->printSignature();
+	obj->print();
+	printf("\n");
+	inner.getChunk()->print();
+#endif
 
 	pair<int, bool>* upvalues = new pair<int, bool>[obj->upvalue_count];
 	for (auto& x : inner.getUpvalues()) {
 		upvalues[x.second.pos] = { x.second.capture_pos, x.second.isLocal };
 	}
 
-	for (auto end = upvalues + obj->upvalue_count; upvalues != end; ++upvalues) {
+	return { obj, upvalues };
+}
+
+FUNC_SHORTCUT(Func) {
+	const bool isanonymous = node->name.empty();
+	ResolveResult res;
+
+	if (!isanonymous) {
+		res = this->addLocal(node->name);
+	}
+
+	auto pr = compileInnerFunction(node->stmts, node->name, node->argsname, node->arity);
+	auto obj = pr.first;
+	auto upvalues = pr.second;
+
+	this->chunk->argedOP(OP_CLOSURE, this->chunk->addObjectConst(obj));
+
+	for (auto end = upvalues + obj->countUpvalues(); upvalues != end; ++upvalues) {
 		this->chunk->addOPs(upvalues->first / 256, upvalues->first & 255, upvalues->second);
 	}
 
-	upvalues -= obj->upvalue_count;
+	upvalues -= obj->countUpvalues();
 	delete[] upvalues;
 
-	if (!node->name.empty()) {
+	if (!isanonymous) {
 		this->chunk->argedOP(OP_COPY, res.position);
 	}
+}
+
+FUNC_SHORTCUT(Generator) {
+	visitFuncNode(node->function);
+	AS_FUNCTION(this->chunk->getConsts().back())->is_generator = true;
 }
 
 // Function caller
@@ -174,8 +212,7 @@ FUNC_SHORTCUT(Print) {
 FUNC_SHORTCUT(VarDecl) {
 
 	for (auto& declare : node->declarations) {
-		string name = tokenToString(declare.name);
-		ResolveResult res = this->addLocal(&name);
+		ResolveResult res = this->addLocal(declare.name->getStr());
 
 		this->compile(declare.init);
 	}
@@ -253,6 +290,8 @@ FUNC_SHORTCUT(For) {
 		false_jump = this->chunk->addGoto(OP_GOTO_IF_FALSE);
 		this->chunk->addOPs(OP_POP);
 	}
+
+	this->listenFlags();
 	this->compile(node->body);
 
 	size_t continue_jump = this->chunk->length();
@@ -271,6 +310,26 @@ FUNC_SHORTCUT(For) {
 	this->resolveFlags(continue_jump, break_jump);
 }
 
+FUNC_SHORTCUT(ForEach) {
+	ResolveResult iterable_holder = this->addSpecialVar(),
+		container = this->defaultLocal(node->varname.getStr());
+	
+	this->compile(node->itexpr);
+
+	const auto op_ptr = this->chunk->argedOP(OP_ITER, 0);
+	this->chunk->addUshort(container.position);
+
+	const auto loop_start = this->chunk->length();
+	this->chunk->addOPs(OP_ITER_NEXT);
+
+	this->compile(node->body);
+	this->chunk->argedOP(OP_GOTO, loop_start);
+
+	this->chunk->writeUshort(op_ptr, this->chunk->length());
+	this->resolveFlags(loop_start, this->chunk->length());
+	this->chunk->addOPs(OP_ITER_END);
+}
+
 FUNC_SHORTCUT(While) {
 	if (node->exp->type == NODE_LITERAL && ((Literal*)node->exp)->token.type == TOKEN_FALSE) {
 		return;
@@ -285,6 +344,7 @@ FUNC_SHORTCUT(While) {
 		this->chunk->addOPs(OP_POP);
 	}
 
+	this->listenFlags();
 	this->compile(node->body);
 
 	this->chunk->argedOP(OP_GOTO, loop_start);
@@ -302,16 +362,23 @@ FUNC_SHORTCUT(While) {
 // Control flow
 
 FUNC_SHORTCUT(Break) {
-	this->addControlFlow(FLOW_BREAK, this->chunk->addGoto(OP_GOTO));
+	this->addControlFlow(FLOW_BREAK, this->chunk->addGoto(OP_GOTO_SET_STACK));
+	this->chunk->addUshort(this->flag_stack_pos);
 }
 
 FUNC_SHORTCUT(Continue) {
-	this->addControlFlow(FLOW_CONTINUE, this->chunk->addGoto(OP_GOTO));
+	this->addControlFlow(FLOW_CONTINUE, this->chunk->addGoto(OP_GOTO_SET_STACK));
+	this->chunk->addUshort(this->flag_stack_pos);
 }
 
 FUNC_SHORTCUT(Return) {
 	this->compile(node->retexp);
 	this->chunk->addOPs(OP_RETURN);
+}
+
+FUNC_SHORTCUT(Yield) {
+	this->compile(node->value);
+	this->chunk->addOPs(OP_YIELD);
 }
 
 FUNC_SHORTCUT(Raise) {
@@ -394,8 +461,7 @@ FUNC_SHORTCUT(TryCatch) {
 
 		this->newScope();
 		if (node->catcher) {
-			string name(tokenToString(node->catcher));
-			this->addLocal(&name);
+			this->addLocal(node->catcher->getStr());
 		}
 		else {
 			this->chunk->addOPs(OP_POP);
@@ -424,7 +490,7 @@ FUNC_SHORTCUT(This) {
 
 FUNC_SHORTCUT(Literal) {
 	if (node->v) {
-		switch (node->v->type) {
+		switch (TValue::vtype(*node->v)) {
 		case VAL_BOOL:
 			this->chunk->addOPs(AS_BOOLEAN(*node->v) ? OP_TRUE : OP_FALSE);
 			break;
@@ -512,8 +578,7 @@ FUNC_SHORTCUT(TupleGenerator) {
 }
 
 FUNC_SHORTCUT(Var) {
-	string name = tokenToString(node->name);
-	ResolveResult res = this->resolveName(&name);
+	ResolveResult res = this->resolveName(node->name->getStr());
 
 	if (res.type == NAME_LOCAL) {
 		this->chunk->argedOP(OP_COPY, res.position);
@@ -591,7 +656,7 @@ FUNC_SHORTCUT(Compare) {
 FUNC_SHORTCUT(Assign) {
 	Var* identifier = node->name;
 	string name(identifier->name->start, identifier->name->length);
-	ResolveResult res = this->resolveName(&name);
+	ResolveResult res = this->resolveName(name);
 
 	this->compile(node->value);
 
@@ -621,7 +686,7 @@ FUNC_SHORTCUT(MemberAssign) {
 FUNC_SHORTCUT(Increase) {
 	Var* identifier = node->var;
 	string name(identifier->name->start, identifier->name->length);
-	ResolveResult res = this->resolveName(&name);
+	ResolveResult res = this->resolveName(name);
 
 	if (res.type == NAME_LOCAL) {
 		if (node->post_order) {
@@ -646,7 +711,7 @@ FUNC_SHORTCUT(Increase) {
 FUNC_SHORTCUT(Decrease) {
 	Var* identifier = node->var;
 	string name(identifier->name->start, identifier->name->length);
-	ResolveResult res = this->resolveName(&name);
+	ResolveResult res = this->resolveName(name);
 
 	if (res.type == NAME_LOCAL) {
 		if (node->post_order) {

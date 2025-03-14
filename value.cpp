@@ -1,34 +1,84 @@
 #include <string>
 #include <iostream>
 #include <vector>
+#include <format>
 
 #include "value.h"
 #include "vm.h"
 #include "object.h"
 #include "compiler.h"
 #include "natives.h"
+#include "RolIterator.h"
 
 using namespace std;
 
-void Value::print() const {
-	switch (this->type) {
+void TValue::print(const Value& value) {
+	switch (TValue::vtype(value)) {
 	case VAL_NUM:
-		printf("%g", AS_NUMBER(*this));
+		printf("%g", AS_NUMBER(value));
 		break;
 	case VAL_NULL:
 		printf("null");
 		break;
 	case VAL_BOOL:
-		printf(AS_BOOLEAN(*this) ? "true" : "false");
+		printf(AS_BOOLEAN(value) ? "true" : "false");
 		break;
 	case VAL_OBJ:
-		AS_OBJECT(*this)->print();
+		AS_OBJECT(value)->print();
 		break;
 	default:
 		// Unreachable
 		return;
 	}
 }
+void TValue::print_leaf(const Value& value) {
+	switch (TValue::vtype(value)) {
+	case VAL_NUM:
+		printf("%g", AS_NUMBER(value));
+		break;
+	case VAL_NULL:
+		printf("null");
+		break;
+	case VAL_BOOL:
+		printf(AS_BOOLEAN(value) ? "true" : "false");
+		break;
+	case VAL_OBJ:
+		AS_OBJECT(value)->print_leaf();
+		break;
+	default:
+		// Unreachable
+		return;
+	}
+}
+string TValue::repr(const Value& value, VM* vm) {
+	switch (TValue::vtype(value)) {
+	case VAL_NULL:
+		return "null";
+	case VAL_BOOL:
+		return AS_BOOLEAN(value) ? "true" : "false";
+	case VAL_NUM:
+		return vformat(string_view("{}"), make_format_args(AS_RNUMBER(value)));
+	case VAL_OBJ:
+		return AS_OBJECT(value)->repr(vm);
+	default:
+		throw exception("Invalid value type");
+	}
+}
+string VTYPEN::repr_leaf(const Value& value, VM* vm) {
+	switch (TValue::vtype(value)) {
+	case VAL_NULL:
+		return "null";
+	case VAL_BOOL:
+		return AS_BOOLEAN(value) ? "true" : "false";
+	case VAL_NUM:
+		return vformat(string_view("{}"), make_format_args(AS_RNUMBER(value)));
+	case VAL_OBJ:
+		return AS_OBJECT(value)->repr_leaf(vm);
+	default:
+		throw exception("Invalid value type");
+	}
+}
+
 
 Value Value_ADD(const Value& a, const Value& b, ValuePool* pool, bool& status) {
 	status = true;
@@ -36,20 +86,20 @@ Value Value_ADD(const Value& a, const Value& b, ValuePool* pool, bool& status) {
 		return AS_NUMBER(a) + AS_NUMBER(b);
 	}
 	else if (IS_STRINGOBJ(a) and IS_STRINGOBJ(b)) {
-		return pool->internString(*AS_STRING(a) + *AS_STRING(b));
+		return OBJ_VAL(pool->internStr(*AS_STRING(a) + *AS_STRING(b)));
 	}
 	else {
 		status = false;
-		return Value();
+		return NULL_VAL;
 	}
 }
 
 #define MATHOP_SNIPPET(op) status = true; \
 if (IS_NUMBER(a) and IS_NUMBER(b)) { \
-	return AS_NUMBER(a) op AS_NUMBER(b); \
+	return NUM_VAL(AS_NUMBER(a) op AS_NUMBER(b)); \
 } else { \
 	status = false; \
-	return Value(); \
+	return NULL_VAL; \
 }
 
 Value Value_SUB(const Value& a, const Value& b, bool& status) {
@@ -64,11 +114,11 @@ Value Value_DIV(const Value& a, const Value& b, bool& status) {
 Value Value_POW(const Value& a, const Value& b, bool& status) {
 	status = true;
 	if (IS_NUMBER(a) and IS_NUMBER(b)) {
-		return pow(AS_NUMBER(a), AS_NUMBER(b));
+		return NUM_VAL(pow(AS_NUMBER(a), AS_NUMBER(b)));
 	}
 	else {
 		status = false;
-		return Value();
+		return NULL_VAL;
 	}
 }
 
@@ -77,25 +127,21 @@ Value Value_POW(const Value& a, const Value& b, bool& status) {
 
 #define CMP_SNIPPET(op) status = true; \
 if (IS_NUMBER(a) and IS_NUMBER(b)) { \
-	return AS_NUMBER(a) op AS_NUMBER(b); \
+	return BOOL_VAL(AS_NUMBER(a) op AS_NUMBER(b)); \
 } else { \
 	status = false; \
-	return Value(); \
+	return NULL_VAL; \
+}
+#define CMP_FUNC(code, op) Value Value_CMP_##code##(const Value& a, const Value& b, bool& status) { \
+	CMP_SNIPPET(op); \
 }
 
-Value Value_CMP_LESS(const Value& a, const Value& b, bool& status) {
-	CMP_SNIPPET(< );
-}
-Value Value_CMP_GREATER(const Value& a, const Value& b, bool& status){
-	CMP_SNIPPET(> );
-}
-Value Value_CMP_LESS_EQ(const Value& a, const Value& b, bool& status){
-	CMP_SNIPPET(<= );
-}
-Value Value_CMP_GREATER_EQ(const Value& a, const Value& b, bool& status){
-	CMP_SNIPPET(>= );
-}
+CMP_FUNC(LESS, < );
+CMP_FUNC(GREATER, > );
+CMP_FUNC(LESS_EQ, <= );
+CMP_FUNC(GREATER_EQ, >= );
 
+#undef CMP_FUNC
 #undef CMP_SNIPPET
 
 
@@ -106,7 +152,7 @@ Value Value_UNARY_NEGATE(const Value& a, bool& status) {
 	}
 	else {
 		status = false;
-		return Value();
+		return NULL_VAL;
 	}
 }
 
@@ -114,33 +160,62 @@ Value Value_UNARY_NEGATE(const Value& a, bool& status) {
 // ValuePool implementation
 
 ValuePool::ValuePool() : random_generator(rd()) {
-	this->ValueConstFalse = new Value(false);
-	this->ValueConstTrue = new Value(true);
-	this->ValueConstNull = new Value();
-
 	ValuePool::objectPrototype = new Object("object_prototype");
+
+	this->itertool = new RolIterTools(this);
+
+	finalizeSetup();
+}
+ValuePool::~ValuePool() {
+
+	for (auto& it : this->number_consts) {
+		delete it.second;
+	}
+
+	for (auto it : this->objects) {
+		delete it;
+	}
+
+	for (auto it : this->permanent_objects) {
+		delete it;
+	}
+
+	for (auto it : this->live_chunks) {
+		delete it;
+	}
+
+	delete this->itertool;
+
+	delete[] this->character_strings;
+
+	delete ValuePool::objectPrototype;
+	// no need to free `lengthString` because it was already deleted as an permanent object
+	ValuePool::objectPrototype = ValuePool::lengthString = NULL;
 }
 
 void ValuePool::finalizeSetup() {
-	this->character_strings = new StringObject*[256];
+	character_strings = new StringObject*[256];
 	for (int i = 0; i < 256; ++i) {
-		this->character_strings[i] = this->internPermanentString(string(1, (char)(i - 127)));
+		character_strings[i] = internPermStr(string(1, (char)(i - 127)));
 	}
 
-	ValuePool::lengthString = this->internPermanentString("length");
+	ValuePool::lengthString = internPermStr("length");
 	ValuePool::lengthString->props.clear();
-	ValuePool::lengthString->props[ValuePool::lengthString] = ValuePool::lengthString;
+	ValuePool::lengthString->props[OBJ_VAL(ValuePool::lengthString)] = OBJ_VAL(ValuePool::lengthString);
 
-	this->prototypeString = this->internString("prototype");
+	prototypeString = internPermStr("prototype");
+	nullString = internPermStr("null");
+	falseString = internPermStr("false");
+	trueString = internPermStr("true");
+	finishedString = internPermStr("finished");
 
 	for (const auto& x : permanent_objects) {
 		if (x->type == OBJECT_STRING) {
-			x->props.erase((Object*)NULL);
-			x->props[ValuePool::lengthString] = (double)((StringObject*)x)->length();
+			x->props.erase(OBJ_VAL(NULL));
+			x->props[OBJ_VAL(ValuePool::lengthString)] = (double)((StringObject*)x)->length();
 		}
 	}
 }
-
 void ValuePool::finalizeRegisterations() {
 	next_gc_run = total_size * 2;
 
@@ -151,6 +226,9 @@ void ValuePool::finalizeRegisterations() {
 			case OBJECT_STRING:
 				x->prototype = this->nativeBase->stringPrototype;
 				break;
+			case OBJECT_SET:
+				x->prototype = this->nativeBase->setPrototype;
+				break;
 			case OBJECT_FROZEN:
 			case OBJECT_OBJECT:
 				x->prototype = &this->nativeBase->objectPrototype;
@@ -160,34 +238,17 @@ void ValuePool::finalizeRegisterations() {
 	}
 
 	native_objects.clear(); native_objects.shrink_to_fit();
+
+#define DEF_PROTO(name) nativeBase->name##Init->property_set(OBJ_VAL(this->prototypeString), OBJ_VAL(nativeBase->name##Prototype));
+
+	DEF_PROTO(set)
+	DEF_PROTO(string)
+	DEF_PROTO(list)
+	DEF_PROTO(tuple)
+
+#undef DEF_PROTO
 }
 
-ValuePool::~ValuePool() {
-	delete this->ValueConstNull;
-	delete this->ValueConstTrue;
-	delete this->ValueConstFalse;
-	delete[] this->character_strings;
-
-	for (auto it : this->permanent_objects) {
-		delete it;
-	}
-
-	for (auto& it : this->number_consts) {
-		delete it.second;
-	}
-
-	for (auto it : this->objects) {
-		delete it;
-	}
-
-	for (auto it : this->live_chunks) {
-		delete it;
-	}
-
-	delete ValuePool::objectPrototype;
-	// no need to free `lengthString` because it was already deleted as an permanent object
-	ValuePool::objectPrototype = ValuePool::lengthString = NULL;
-}
 
 #define STRING_INTERNER(registerer) auto it = this->string_consts.find(str); \
 if (it == this->string_consts.end()) { \
@@ -199,17 +260,18 @@ if (it == this->string_consts.end()) { \
 	return it->second; \
 }
 
-bool ValuePool::hasString(const string& stri) const {
-	return this->string_consts.contains(stri);
-}
-
-StringObject* ValuePool::internString(const string& str, bool silently) {
+StringObject* ValuePool::internStr(const string& str, bool silently) {
 	STRING_INTERNER(silently ? this->silentRegisterObject(stri) : this->registerObject(stri));
 }
-StringObject* ValuePool::internPermanentString(const string& str) {
-	STRING_INTERNER(this->permanentObject(stri));
+StringObject* ValuePool::internPermStr(const string& str) {
+	auto it = this->string_consts.find(str); if (it == this->string_consts.end()) {
+		StringObject* stri = new StringObject(str); this->permanentObject(stri); return this->string_consts[str] = stri;
+	}
+	else {
+		return it->second;
+	};
 }
-StringObject* ValuePool::internNativeString(const string& str) {
+StringObject* ValuePool::internNativeStr(const string& str) {
 	STRING_INTERNER(this->nativeObject(stri));
 }
 
@@ -218,13 +280,12 @@ const size_t hashTupleRepr(const vector<Value>& v) noexcept {
 		return 0;
 	}
 	else if (v.size() == 1) {
-		return hash<Value>()(v.front());
+		return v.front();
 	}
 	else {
 		size_t value = 0;
-		hash<Value> hasher_;
 		for (const auto& x : v)
-			value ^= hasher_(x);
+			value ^= x;
 		return value;
 	}
 }
@@ -233,11 +294,10 @@ TupleObject* ValuePool::internTupleConst(const vector<Value>& repr) {
 	const size_t hash_id = hashTupleRepr(repr);
 	auto it = this->tuple_consts.equal_range(hash_id);
 	
-	for (auto x = it.first; x != it.second; ++x) {
-		return x->second;
-	}
+	if (it.first != it.second)
+		return it.first->second;
 
-	auto tup = new TupleObject((Value*)&repr.front(), repr.size());
+	auto tup = repr.empty() ? new TupleObject() : new TupleObject((Value*)&repr.front(), repr.size());
 	tup->prototype = this->nativeBase->tuplePrototype;
 
 	this->nativeObject(tup);
@@ -248,10 +308,10 @@ TupleObject* ValuePool::internTupleConst(const vector<Value>& repr) {
 
 
 
-UpvalueObject* ValuePool::addUpvalue(Value* value, int capture_pos) {
+UpvalueObject* ValuePool::addUpvalue(Value* value) {
 	auto it = this->upvalues.find(value);
 	if (it == this->upvalues.end()) {
-		UpvalueObject* upvalue = new UpvalueObject(value, capture_pos);
+		UpvalueObject* upvalue = new UpvalueObject(value);
 		this->registerObject(upvalue);
 		return this->upvalues[value] = upvalue;
 	}
@@ -266,27 +326,75 @@ UpvalueObject* ValuePool::getUpvalue(Value* value) {
 
 // Object registerers
 
-void ValuePool::registerTuple(TupleObject* tuple) {
-	tuple->prototype = nativeBase->tuplePrototype;
-	this->registerObject(tuple);
-}
-
-void ValuePool::registerList(ListObject* list) {
-	list->prototype = nativeBase->listPrototype;
-	this->registerObject(list);
-}
-
-void ValuePool::assignPrototype(ObjectType type, Object* prototype) {
-	for (auto& x : objects) {
-		if (x->type == type) {
-			x->prototype = prototype;
+void ValuePool::registerUnknownObject(Object* obj) {
+	switch (obj->type) {
+	case OBJECT_STRING:
+		internStr(((StringObject*)obj)->content, true);
+		break;
+	case OBJECT_TUPLE:
+		registerTuple((TupleObject*)obj);
+		break;
+	case OBJECT_LIST:
+		registerList((ListObject*)obj);
+		break;
+	default:
+		if (total_size > next_gc_run) {
+			runGC();
+			next_gc_run = total_size * GC_HEAP_GROW_FACTOR;
 		}
+
+		objects.push_back(obj);
+		total_size += obj->obj_size() + obj->_talloc_size();
+		if (!obj->prototype) {
+			obj->prototype = ValuePool::objectPrototype;
+		}
+		break;
 	}
+}
 
-	for (auto& x : permanent_objects) {
-		if (x->type == type) {
-			x->prototype = prototype;
-		}
+void ValuePool::registerTuple(TupleObject* tuple, bool silently) {
+	tuple->prototype = nativeBase->tuplePrototype;
+	silently ? this->silentRegisterObject(tuple) : this->registerObject(tuple);
+}
+void ValuePool::registerList(ListObject* list, bool silently) {
+	list->prototype = nativeBase->listPrototype;
+	silently ? this->silentRegisterObject(list) : this->registerObject(list);
+}
+void ValuePool::registerSet(SetObject* set, bool silently) {
+	set->prototype = nativeBase->setPrototype;
+	silently ? this->silentRegisterObject(set) : this->registerObject(set);
+}
+void ValuePool::registerIterable(IterableObject* iterb, bool silently) {
+	iterb->prototype = nativeBase->iterablePrototype;
+	silently ? this->silentRegisterObject(iterb) : this->registerObject(iterb);
+}
+
+void ValuePool::assignPrototype(Object* object) {
+	switch (object->type) {
+	case OBJECT_STRING:
+		object->prototype = nativeBase->stringPrototype;
+		break;
+	case OBJECT_CLOSURE:
+		object->prototype = nativeBase->functionPrototype;
+		break;
+	case OBJECT_LIST:
+		object->prototype = nativeBase->listPrototype;
+		break;
+	case OBJECT_TUPLE:
+		object->prototype = nativeBase->tuplePrototype;
+		break;
+	case OBJECT_SET:
+		object->prototype = nativeBase->setPrototype;
+		break;
+	case OBJECT_ITERABLE:
+		object->prototype = nativeBase->iterablePrototype;
+		break;
+	case OBJECT_EXCEPTION:
+		object->prototype = nativeBase->exceptionPrototype;
+		break;
+	default:
+		object->prototype = &nativeBase->objectPrototype;
+		break;
 	}
 }
 
@@ -312,7 +420,7 @@ void ValuePool::runGC() {
 	// Sweeping
 	vector<Object*> living;
 	for (const auto& x : this->objects) {
-		if (x->mark) {
+		if (OBJECT_ISREACHABLE(x)) {
 			living.push_back(x);
 		}
 		else {
@@ -356,7 +464,7 @@ void ValuePool::runGC() {
 	}
 	this->objects = living;
 	for (auto x : this->objects) {
-		x->mark = false;
+		OBJECT_UNFLAG_REACHABLE(x);
 	}
 
 #ifdef GC_SHOW_SUMMARY
@@ -376,7 +484,6 @@ void ValuePool::_GCmarkCompilerRoots() {
 	Compiler* compiler = this->currentCompiler;
 	while (compiler != NULL) {
 		_GCmarkChunk(compiler->getChunk());
-
 		compiler = compiler->parent;
 	}
 }
@@ -390,7 +497,7 @@ void ValuePool::_GCmarkRoots() {
 		}
 
 		for (auto& frame : vm->frames) {
-			_GCmarkObject((Object*)frame.closure);
+			_GCmarkObject((Object*)frame.callee);
 		}
 	}
 	else {
@@ -403,15 +510,15 @@ void ValuePool::_GCmarkRoots() {
 }
 
 void ValuePool::_GCmarkObject(Object* obj) {
-	if (obj->mark)
+	if (OBJECT_ISREACHABLE(obj))
 		return;
 
-	for (auto it = obj->begin(); it != obj->end(); ++it) {
-		if (IS_OBJECT(it->second)) {
-			grayObjects.push_back(AS_OBJECT(it->second));
+	for (const auto& pr : ITER_PURE_OBJ(obj)) {
+		if (IS_OBJECT(pr.second)) {
+			grayObjects.push_back(AS_OBJECT(pr.second));
 		}
-		if (IS_OBJECT(it->first)) {
-			grayObjects.push_back(AS_OBJECT(it->first));
+		if (IS_OBJECT(pr.first)) {
+			grayObjects.push_back(AS_OBJECT(pr.first));
 		}
 	}
 
@@ -419,23 +526,16 @@ void ValuePool::_GCmarkObject(Object* obj) {
 		grayObjects.push_back(obj->prototype);
 	}
 
-	obj->mark = true;
+	OBJECT_FLAG_REACHABLE(obj);
 
 	switch (obj->type) {
 	case OBJECT_OBJECT:
 	case OBJECT_FROZEN:
+	case OBJECT_ITERABLE:
 	case OBJECT_STRING:
 	case OBJECT_NATIVE_FUNCTION:
 	case OBJECT_EXCEPTION:
-	case OBJECT_TYPE_ERROR:
-	case OBJECT_INTERNAL_ERROR:
 		break;
-	case OBJECT_RAISED_EXCEPTION: {
-		const auto& v = ((RaisedExceptionObject*)obj)->throwValue;
-		if (IS_OBJECT(v))
-			grayObjects.push_back(AS_OBJECT(v));
-		break;
-	}
 	case OBJECT_UPVALUE: {
 		Value& v = *((UpvalueObject*)obj)->location;
 		if (IS_OBJECT(v)) {
@@ -463,14 +563,21 @@ void ValuePool::_GCmarkObject(Object* obj) {
 		break;
 	}
 	case OBJECT_LIST:
-		for (auto& x : *(ListObject*)obj) {
+		for (auto& x : ITER_LIST(obj)) {
 			if (IS_OBJECT(x)) {
 				grayObjects.push_back(AS_OBJECT(x));
 			}
 		}
 		break;
 	case OBJECT_TUPLE:
-		for (auto& x : *(TupleObject*)obj) {
+		for (auto& x : ITER_TUPLE(obj)) {
+			if (IS_OBJECT(x)) {
+				grayObjects.push_back(AS_OBJECT(x));
+			}
+		}
+		break;
+	case OBJECT_SET:
+		for (auto& x : ITER_SET(obj)) {
 			if (IS_OBJECT(x)) {
 				grayObjects.push_back(AS_OBJECT(x));
 			}
