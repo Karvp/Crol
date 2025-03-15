@@ -261,11 +261,10 @@ protected:
 		local_count = bindings[0].size();
 
 		current_scope = 0;
-		listen_flags = false;
-		flags.clear();
+		loop_contexts.clear();
 	}
 private:
-	const set<NodeType> NotExpr{ NODE_IF, NODE_BLOCK, NODE_STMTS, NODE_PRINT, NODE_VAR_DECL, NODE_WHILE, NODE_FOR, NODE_RETURN, NODE_TRY_CATCH, NODE_BREAK, NODE_CONTINUE, NODE_RAISE };
+	const set<NodeType> NotExpr{ NODE_IF, NODE_BLOCK, NODE_STMTS, NODE_PRINT, NODE_VAR_DECL, NODE_WHILE, NODE_FOR, NODE_FOREACH, NODE_RETURN, NODE_TRY_CATCH, NODE_BREAK, NODE_CONTINUE, NODE_RAISE };
 	const string firstSlotName = "this";
 
 	ValuePool* pool;
@@ -275,12 +274,16 @@ private:
 	map<string, Upvalue> upvalues;
 
 	mapping_type bindings;
-	chunk_size local_count, upvalue_count, special_var_count = 0, flag_stack_pos;
-	bool listen_flags = false;
+	chunk_size local_count, upvalue_count, special_var_count = 0;
 
 	int current_scope = -1;
 
-	vector<ControlFlow> flags;
+	struct LoopFixupContext {
+		vector<ControlFlow> pending;
+		chunk_size stack_end_slot;
+	};
+
+	vector<LoopFixupContext> loop_contexts;
 
 	void newScope() {
 		if (current_scope == MAX_SCOPE_DEPTH)
@@ -310,25 +313,37 @@ private:
 	}
 
 	void addControlFlow(FlowType type, const size_t pos) {
-		if (!listen_flags) {
-			error("Control flow not allowed");
-		}
-		this->flags.emplace_back(type, pos);
+		if (loop_contexts.empty())
+			throw this->error("Control flow not allowed outside a loop");
+
+		loop_contexts.back().pending.emplace_back(type, pos);
 	}
 
 	void listenFlags() {
-		listen_flags = true;
-		flag_stack_pos = local_count;
-		this->flags.clear();
+		// Stack end points to the last occupied slot.
+		loop_contexts.push_back({
+			{},
+			static_cast<chunk_size>(local_count - 1)
+			});
+	}
+
+	chunk_size currentLoopStackEnd() const {
+		return loop_contexts.back().stack_end_slot;
 	}
 
 	void resolveFlags(size_t continue_jump, size_t break_jump) {
-		for (auto& flag : this->flags) {
-			this->chunk->writeUshort(flag.pos, flag.type == FLOW_BREAK ? break_jump : continue_jump);
+		if (loop_contexts.empty())
+			throw this->error("Loop fixup stack underflow");
+
+		const auto pending = std::move(loop_contexts.back().pending);
+		loop_contexts.pop_back();
+
+		for (const auto& fixup : pending) {
+			chunk->writeUshort(
+				fixup.pos,
+				fixup.type == FLOW_BREAK ? break_jump : continue_jump
+			);
 		}
-		this->flags.clear();
-		listen_flags = false;
-		flag_stack_pos = MAX_CHUNK_SIZE;
 	}
 
 

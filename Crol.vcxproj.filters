@@ -51,7 +51,7 @@
     <ClCompile Include="natives.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="state.cpp">
+    <ClCompile Include="RolIterator.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -95,7 +95,7 @@
     <ClInclude Include="natives.h">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="state.h">
+    <ClInclude Include="RolIterator.h">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -103,5 +103,6 @@
     <None Include="object.h">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="implementing_asynchronous.md" />
   </ItemGroup>
 </Project>

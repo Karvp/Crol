@@ -415,7 +415,8 @@ VMExecutionResult VM::interpret() {
 			Value& b = *(stack_end--);
 
 #ifdef NAN_BOXING
-			*stack_end = Value_CMP_EQU(*stack_end, b);
+			*stack_end = TO_BOOLEAN(Value_CMP_EQU(*stack_end, b));
+			continue;
 #else
 			Value& a = *stack_end;
 
@@ -448,7 +449,8 @@ VMExecutionResult VM::interpret() {
 			Value& b = *(stack_end--);
 
 #ifdef NAN_BOXING
-			*stack_end = Value_CMP_NEQ(*stack_end, b);
+			*stack_end = TO_BOOLEAN(Value_CMP_NEQ(*stack_end, b));
+			continue;
 #else
 			Value& a = *stack_end;
 
@@ -564,10 +566,14 @@ VMExecutionResult VM::interpret() {
 				// Unreachable
 				throw exception("Unknown value type");
 			}
-		case OP_GOTO_SET_STACK:
-			ops = start + READ_USHORT(ops);
-			stack_end = stack_begin + READ_USHORT(ops);
+		case OP_GOTO_SET_STACK: {
+			const auto target = READ_USHORT(ops);
+			const auto stack_slot = READ_USHORT(ops);
+
+			stack_end = stack_begin + stack_slot;
+			ops = start + target;
 			continue;
+		}
 
 		case OP_ITER: {
 			if (!IS_OBJECT(*stack_end)) {
@@ -591,7 +597,7 @@ VMExecutionResult VM::interpret() {
 
 			if (!it_obj.b->notsameas(*(RolIteratorBase*)it_obj.e)) {
 				ops = start + loop_data.op_id;
-				stack_end = stackPtr + loop_data.stack_id;
+				stack_end = stackPtr + loop_data.stack_id + 1;
 				continue;
 			}
 

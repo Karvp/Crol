@@ -11,7 +11,7 @@
 
 using namespace std;
 
-BytecodeOptimizer::BytecodeOptimizer(Chunk* chunk, Value* consts) : chunk(chunk), consts(consts) {
+BytecodeOptimizer::BytecodeOptimizer(Chunk* chunk) : chunk(chunk), consts(chunk->getConsts().data()) {
 	opit = new OperationIterator(chunk);
 }
 
@@ -46,42 +46,6 @@ void BytecodeOptimizer::optimize() {
 		}
 		
 		switch (it->type) {
-		/*case OP_GEN_OBJ: {
-			chunk_size length = GET_USHORT(it->arg) * 2 + 1;
-
-			if (pushers.size() >= length) {
-				while (--length)
-					pushers.pop_back();
-				size_t lend = pushers.back().first;
-
-				pushers.back() = { lend, it.pos };
-				break;
-			}
-
-			pushers.clear();
-			break;
-		}
-		case OP_GEN_TUPLE:
-		case OP_GEN_LIST: {
-			chunk_size length = GET_USHORT(it->arg);
-
-			if (!length) {
-				pushers.emplace_back(it.pos, it.pos);
-				break;
-			}
-
-			if (pushers.size() >= length) {
-				while (--length)
-					pushers.pop_back();
-				size_t lend = pushers.back().first;
-
-				pushers.back() = { lend, it.pos };
-				break;
-			}
-
-			pushers.clear();
-			break;
-		}*/
 		case OP_POP:
 			if (!pushers.empty()) {
 				size_t pop_streak = 0, non_targeted_pops = 0;
@@ -132,17 +96,17 @@ void BytecodeOptimizer::optimize() {
 Value ASTOptimizer::fromToken(const Token& token) {
 	switch (token.type) {
 	case TOKEN_NULL:
-		return Value();
+		return NULL_VAL;
 	case TOKEN_TRUE:
-		return Value(true);
+		return TRUE_VAL;
 	case TOKEN_FALSE:
-		return Value(false);
+		return FALSE_VAL;
 	case TOKEN_NUMBER:
-		return strtod(token.start, NULL);
+		return NUM_VAL(strtod(token.start, NULL));
 	case TOKEN_STRING:
-		return pool->internNativeString(__tokenToString((Token*)&token));
+		return toValue(pool->internNativeStr(Token::toString((Token*)&token)));
 	case TOKEN_IDENTIFIER:
-		return pool->internNativeString(string(token.start, token.length));
+		return toValue(pool->internNativeStr(string(token.start, token.length)));
 
 	default:
 		// Unreachable
@@ -156,7 +120,7 @@ Node* ASTOptimizer::flatten(Node* node) {
 
 	switch (nodes.size()) {
 	case 0:
-		return new Literal(new Value());
+		return new Literal(new Value(NULL_VAL));
 	case 1:
 		return nodes.front();
 	default:
@@ -181,34 +145,23 @@ FUNC_SHORTCUT(Return) {
 }
 
 FUNC_SHORTCUT(For) {
-	if (node->init) OPTIMIZE(node->init);
-	if (node->incr) OPTIMIZE(node->incr);
-	if (node->cond) OPTIMIZE(node->cond);
+	if (node->init)
+		OPTIMIZE(node->init);
+
+	if (node->incr)
+		OPTIMIZE(node->incr);
+
+	if (node->cond)
+		OPTIMIZE(node->cond);
+
 	OPTIMIZE(node->body);
 
-	if (node->cond && this->isLiteral(node->cond)) {
-		auto cond = this->getLiteral(node->cond);
+	return node;
+}
 
-		Value prep((bool)*cond);
-
-		if (prep) {
-			delete node->cond;
-			auto replace = new Literal(new Value(prep));
-			this->markLiteral(replace);
-		}
-		else {
-			if (node->init) {
-				auto init = node->init;
-				delete node;
-				return init;
-			}
-			else {
-				auto replace = new Literal(new Value());
-				this->markLiteral(replace, node);
-				return replace;
-			}
-		}
-	}
+FUNC_SHORTCUT(ForEach) {
+	OPTIMIZE(node->itexpr);
+	OPTIMIZE(node->body);
 	return node;
 }
 
@@ -219,17 +172,9 @@ FUNC_SHORTCUT(While) {
 	if (node->exp && this->isLiteral(node->exp)) {
 		auto exp = this->getLiteral(node->exp);
 
-		this->pendingRemoval({ node->exp, node });
-
-		bool prep = *exp;
-
-		if (prep) {
-			auto replace = new Literal(new Value(prep));
-			this->markLiteral(replace);
-			return replace;
-		}
-		else {
-			auto replace = new Literal(new Value());
+		if (!AS_BOOLEAN(exp)) {
+			this->pendingRemoval({ node->exp, node });
+			auto replace = new Literal(new Value(NULL_VAL));
 			this->markLiteral(replace);
 			return replace;
 		}
@@ -245,81 +190,18 @@ FUNC_SHORTCUT(TryCatch) {
 }
 
 FUNC_SHORTCUT(If) {
-	OPTIMIZE(node->main);
+	OPTIMIZE(node->main->exp);
+	OPTIMIZE(node->main->body);
+
+	for (auto& elif : node->elifs) {
+		OPTIMIZE(elif->exp);
+		OPTIMIZE(elif->body);
+	}
 
 	if (node->else_)
 		OPTIMIZE(node->else_);
 
-	vector<Node*> checkers;
-
-	switch (node->main->type) {
-	case NODE_BLOCK:
-		for (const auto& x : node->elifs) {
-			this->removeBranch(x);
-		}
-		if (node->else_)
-			this->removeBranch(node->else_);
-		return node->main;
-	case NODE_IF:
-		checkers.push_back(node->main);
-		break;
-	case NODE_LITERAL:
-		break;
-	}
-
-	bool flag = false;
-	for (auto& x : node->elifs) {
-		Node* opted = this->optimize(x);
-
-		switch (opted->type) {
-		case NODE_BLOCK:
-			flag = true;
-		case NODE_IF:
-			checkers.push_back(opted);
-		case NODE_LITERAL:
-			break;
-		}
-
-		if (flag)
-			break;
-	}
-
-	if (node->else_ && !checkers.empty() && IS_NODE(*checkers.back(), NODE_BLOCK))
-		checkers.push_back(node->else_);
-
-	if (checkers.empty()) {
-		return node->else_ ? (Node*)node->else_ : (Node*)new Literal(new Value());
-	}
-	else {
-		const auto& new_main = checkers.front();
-
-		if (IS_NODE(*new_main, NODE_BLOCK)) {
-			for (size_t i = 1; i < checkers.size(); ++i) {
-				this->removeBranch(checkers[i]);
-			}
-			if (node->else_)
-				this->removeBranch(node->else_);
-			return new_main;
-		}
-		else {
-			node->main = (Condition*)new_main;
-
-			if (IS_NODE(*checkers.back(), NODE_BLOCK)) {
-				if ((Node*)node->else_ != checkers.back()) {
-					this->removeBranch(node->else_);
-				}
-				node->else_ = (Block*)checkers.back();
-				checkers.pop_back();
-			}
-
-			node->elifs.clear();
-			for (size_t i = 1; i < checkers.size(); ++i) {
-				node->elifs.push_back((Condition*)checkers[i]);
-			}
-
-			return node;
-		}
-	}
+	return node;
 }
 
 FUNC_SHORTCUT(Condition) {
@@ -328,13 +210,13 @@ FUNC_SHORTCUT(Condition) {
 	if (this->isLiteral(node->exp)) {
 		auto exp = this->getLiteral(node->exp);
 
-		Value cond((bool)*exp);
+		Value cond = TValue::tobool(*exp);
 
 		this->pendingRemoval({ node, node->exp });
 		if (!cond)
 			this->pendingRemoval({ node->body });
 
-		return cond ? (Node*)node->body : (Node*)new Literal(new Value());
+		return cond ? (Node*)node->body : (Node*)new Literal(new Value(NULL_VAL));
 	}
 
 	return node;
@@ -380,11 +262,20 @@ FUNC_SHORTCUT(Raise) {
 	OPTIMIZE(node->raiseexp);
 	return node;
 }
+FUNC_SHORTCUT(Yield) {
+	OPTIMIZE(node->value);
+	return node;
+}
 
 // Special expressions
 
 FUNC_SHORTCUT(Func) {
 	OPTIMIZE(node->stmts);
+	return node;
+}
+
+FUNC_SHORTCUT(Generator) {
+	OPTIMIZE(node->function);
 	return node;
 }
 
@@ -422,7 +313,7 @@ FUNC_SHORTCUT(Ternary) {
 	OPTIMIZE(node->texp);
 	OPTIMIZE(node->fexp);
 
-	uint8_t state = 2;
+	bytecode state = 2;
 	
 	if (this->isLiteral(node->cond)) {
 		auto cond = this->getLiteral(node->cond);
@@ -446,12 +337,11 @@ FUNC_SHORTCUT(Or) {
 
 	if (this->isLiteral(node->a)) {
 		auto a = this->getLiteral(node->a);
+		bool fasteval = TValue::tobool(*a);
 
-		this->pendingRemoval({ node, node->a });
-		if (!*a)
-			this->pendingRemoval({ node->b });
+		this->pendingRemoval({ node, fasteval ? node->b : node->a });
 
-		return *a ? new Literal(new Value(*a)) : node->b;
+		return fasteval ? node->a : node->b;
 	}
 
 	return node;
@@ -463,12 +353,11 @@ FUNC_SHORTCUT(And) {
 
 	if (this->isLiteral(node->a)) {
 		auto a = this->getLiteral(node->a);
+		bool fasteval = TValue::tobool(*a);
 
-		this->pendingRemoval({ node });
-		if (*a)
-			this->pendingRemoval({ node->b });
+		this->pendingRemoval({ node, fasteval ? node->a : node->b });
 
-		return *a ? node->b : new Literal(new Value(*a));
+		return fasteval ? node->b : node->a;
 	}
 
 	return node;
@@ -500,10 +389,12 @@ FUNC_SHORTCUT(Compare) {
 		prep = Value_CMP_GREATER_EQ(*a, *b, status);
 		break;
 	case CMP_EQUAL:
-		prep = *a == *b;
+		prep = Value_CMP_EQU(*a, *b) ? TRUE_VAL : FALSE_VAL;
+		status = true;
 		break;
 	case CMP_NOT_EQUAL:
-		prep = *a != *b;
+		prep = Value_CMP_NEQ(*a, *b) ? TRUE_VAL : FALSE_VAL;
+		status = true;
 		break;
 	}
 
@@ -567,7 +458,7 @@ FUNC_SHORTCUT(Not) {
 	if (this->isLiteral(node->node)) {
 		auto prep(this->getLiteral(node->node));
 
-		auto replace = new Literal(new Value(!*prep));
+		auto replace = new Literal(new Value(BOOL_VAL(!TValue::tobool(*prep))));
 		this->markLiteral(replace, node);
 
 		return replace;
@@ -668,7 +559,7 @@ FUNC_SHORTCUT(Member) {
 				if (0ull > index || index >= elem_count) {
 					// If index is out of range, automatically return null
 					flatten(subscr_able, vec);
-					vec.push_back(new Literal(new Value()));
+					vec.push_back(new Literal(new Value(NULL_VAL)));
 					return new ChainExpression(vec);
 				}
 				else {

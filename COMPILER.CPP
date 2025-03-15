@@ -274,6 +274,9 @@ FUNC_SHORTCUT(ChainExpression) {
 FUNC_SHORTCUT(For) {
 	if (node->init) {
 		this->compile(node->init);
+
+		if (!NotExpr.contains(node->init->type))
+			this->chunk->addOPs(OP_POP);
 	}
 
 	Node* cond = node->cond;
@@ -301,19 +304,23 @@ FUNC_SHORTCUT(For) {
 	}
 	this->chunk->argedOP(OP_GOTO, loop_start);
 
-	size_t break_jump = this->chunk->length();
+	const size_t condition_exit = this->chunk->length();
+
 	if (has_condition) {
-		this->chunk->writeUshort(false_jump, break_jump);
+		this->chunk->writeUshort(false_jump, condition_exit);
 		this->chunk->addOPs(OP_POP);
 	}
 
-	this->resolveFlags(continue_jump, break_jump);
+	this->resolveFlags(continue_jump, this->chunk->length());
 }
 
 FUNC_SHORTCUT(ForEach) {
+	// Keep iterator slots in a separate lexical scope
+	this->newScope();
+
 	ResolveResult iterable_holder = this->addSpecialVar(),
-		container = this->defaultLocal(node->varname.getStr());
-	
+		container = this->addLocal(node->varname.getStr());
+
 	this->compile(node->itexpr);
 
 	const auto op_ptr = this->chunk->argedOP(OP_ITER, 0);
@@ -322,12 +329,19 @@ FUNC_SHORTCUT(ForEach) {
 	const auto loop_start = this->chunk->length();
 	this->chunk->addOPs(OP_ITER_NEXT);
 
+	this->listenFlags();
+
 	this->compile(node->body);
 	this->chunk->argedOP(OP_GOTO, loop_start);
 
 	this->chunk->writeUshort(op_ptr, this->chunk->length());
+
 	this->resolveFlags(loop_start, this->chunk->length());
 	this->chunk->addOPs(OP_ITER_END);
+
+	auto& locals = this->bindings[this->current_scope--];
+	this->local_count -= locals.size();
+	locals.clear();
 }
 
 FUNC_SHORTCUT(While) {
@@ -349,26 +363,26 @@ FUNC_SHORTCUT(While) {
 
 	this->chunk->argedOP(OP_GOTO, loop_start);
 
-	size_t break_jump = this->chunk->length();
+	const size_t condition_exit = this->chunk->length();
 
 	if (false_jump != -1) {
-		this->chunk->writeUshort(false_jump, break_jump);
+		this->chunk->writeUshort(false_jump, condition_exit);
 		this->chunk->addOPs(OP_POP);
 	}
 
-	this->resolveFlags(loop_start, break_jump);
+	this->resolveFlags(loop_start, this->chunk->length());
 }
 
 // Control flow
 
 FUNC_SHORTCUT(Break) {
 	this->addControlFlow(FLOW_BREAK, this->chunk->addGoto(OP_GOTO_SET_STACK));
-	this->chunk->addUshort(this->flag_stack_pos);
+	this->chunk->addUshort(this->currentLoopStackEnd());
 }
 
 FUNC_SHORTCUT(Continue) {
 	this->addControlFlow(FLOW_CONTINUE, this->chunk->addGoto(OP_GOTO_SET_STACK));
-	this->chunk->addUshort(this->flag_stack_pos);
+	this->chunk->addUshort(this->currentLoopStackEnd());
 }
 
 FUNC_SHORTCUT(Return) {

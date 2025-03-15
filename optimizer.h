@@ -10,21 +10,22 @@
 
 using namespace std;
 
-class Value;
+typedef unsigned long long Value;
 class ValuePool;
 class Chunk;
 class OperationIterator;
 
 class BytecodeOptimizer {
 public:
-	BytecodeOptimizer(Chunk* chunk, Value* consts);
+	BytecodeOptimizer(Chunk* chunk);
 
 	~BytecodeOptimizer();
 
 	void optimize();
 
 private:
-	const set<OP> Pointers{ OP_GOTO, OP_GOTO_IF_FALSE, OP_GOTO_IF_TRUE, OP_FLAG_CATCH },
+	const set<OP> Pointers{ OP_GOTO, OP_GOTO_IF_FALSE, OP_GOTO_IF_TRUE, OP_FLAG_CATCH,
+						OP_GOTO_SET_STACK },
 				  Pushies{ OP_CONST, OP_TRUE, OP_FALSE, OP_NULL, OP_COPY, OP_GET_UPVALUE,
 						OP_CLOSURE },
 				  BinaryOperations{ 
@@ -101,6 +102,8 @@ public:
 			SHORTCUT(While);
 		case NODE_FOR:
 			SHORTCUT(For);
+		case NODE_FOREACH:
+			SHORTCUT(ForEach);
 		case NODE_RETURN:
 			SHORTCUT(Return);
 		case NODE_BREAK:
@@ -119,6 +122,8 @@ public:
 			SHORTCUT(Decrease);
 		case NODE_FUNC:
 			SHORTCUT(Func);
+		case NODE_GENERATOR:
+			SHORTCUT(Generator);
 		case NODE_CALL:
 			SHORTCUT(Call);
 		case NODE_INVOKE:
@@ -141,6 +146,8 @@ public:
 			SHORTCUT(Raise);
 		case NODE_NEW:
 			SHORTCUT(New);
+		case NODE_YIELD:
+			SHORTCUT(Yield);
 		case NODE_INSTANCEOF:
 			SHORTCUT(InstanceOf);
 		case NODE_CHAIN_EXPRESSION:
@@ -169,7 +176,7 @@ public:
 protected:
 	typedef unordered_map<Node*, Value*> precompute_map;
 
-	const set<NodeType> NotExpr{ NODE_IF, NODE_BLOCK, NODE_STMTS, NODE_PRINT, NODE_VAR_DECL, NODE_WHILE, NODE_FOR, NODE_RETURN, NODE_TRY_CATCH, NODE_BREAK, NODE_CONTINUE, NODE_RAISE };
+	const set<NodeType> NotExpr{ NODE_IF, NODE_BLOCK, NODE_STMTS, NODE_PRINT, NODE_VAR_DECL, NODE_WHILE, NODE_FOR, NODE_FOREACH, NODE_RETURN, NODE_TRY_CATCH, NODE_BREAK, NODE_CONTINUE, NODE_RAISE };
 	const set<NodeType> Subscriptable{ NODE_TUPLE_GENERATOR, NODE_LIST_GENERATOR };
 
 	Node* root;
@@ -236,8 +243,11 @@ _extracter_began:
 		literals[replacement] = this->extractValue(replacement);
 	}
 
-	bool isLiteral(precompute_map::key_type node) const noexcept {
+	bool markedLiteral(precompute_map::key_type node) const noexcept {
 		return literals.contains(node);
+	}
+	bool isLiteral(precompute_map::key_type node) noexcept {
+		return markedLiteral(node) && literals[node];
 	}
 	precompute_map::mapped_type getLiteral(precompute_map::key_type node) noexcept {
 		auto v(literals[node]);
@@ -340,25 +350,28 @@ _extracter_began:
 #define SHORTCUT(node_name) Node* visit ## node_name ## Node(node_name* node);
 
 	SHORTCUT(Func);
-	SHORTCUT(Return);
-
-	SHORTCUT(For);
-	SHORTCUT(While);
-
-	SHORTCUT(TryCatch);
-	SHORTCUT(If);
-
-	SHORTCUT(Condition);
+	SHORTCUT(Generator);
 
 	SHORTCUT(Stmts);
 	SHORTCUT(Block);
+
+	SHORTCUT(TryCatch);
+	SHORTCUT(Condition);
+	SHORTCUT(If);
+
+	SHORTCUT(For);
+	SHORTCUT(ForEach);
+	SHORTCUT(While);
 
 	SHORTCUT(Print);
 	SHORTCUT(VarDecl);
 
 	SHORTCUT(Break);
 	SHORTCUT(Continue);
+
 	SHORTCUT(Raise);
+	SHORTCUT(Return);
+	SHORTCUT(Yield);
 
 
 	SHORTCUT(ChainExpression);

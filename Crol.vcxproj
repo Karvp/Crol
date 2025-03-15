@@ -140,8 +140,8 @@
     <ClCompile Include="object.cpp" />
     <ClCompile Include="optimizer.cpp" />
     <ClCompile Include="parser.cpp" />
-    <ClCompile Include="state.cpp" />
     <ClCompile Include="value.cpp" />
+    <ClCompile Include="RolIterator.cpp" />
     <ClCompile Include="vm.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -155,12 +155,13 @@
     <ClInclude Include="operations.h" />
     <ClInclude Include="optimizer.h" />
     <ClInclude Include="parser.h" />
-    <ClInclude Include="state.h" />
     <ClInclude Include="token.h" />
     <ClInclude Include="value.h" />
+    <ClInclude Include="RolIterator.h" />
     <ClInclude Include="vm.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="implementing_asynchronous.md" />
     <None Include="object.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
