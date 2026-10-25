@@ -12,7 +12,7 @@
 
 using namespace std;
 
-class Token;
+struct Token;
 class TupleObject;
 
 struct ChunkConstants {

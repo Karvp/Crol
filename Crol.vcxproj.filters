@@ -27,13 +27,13 @@
     <ClCompile Include="value.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="object.cpp">
+    <ClCompile Include="OBJECT.CPP">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="chunk.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="compiler.cpp">
+    <ClCompile Include="COMPILER.CPP">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="vm.cpp">
@@ -103,6 +103,5 @@
     <None Include="object.h">
       <Filter>Source Files</Filter>
     </None>
-    <None Include="implementing_asynchronous.md" />
   </ItemGroup>
 </Project>

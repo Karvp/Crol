@@ -1,0 +1,206 @@
+[
+  {
+    "name": "basic_print",
+    "source": "print 7;",
+    "expected": [
+      "7"
+    ]
+  },
+  {
+    "name": "equality",
+    "source": "print 1==1;",
+    "expected": [
+      "true"
+    ]
+  },
+  {
+    "name": "inequality",
+    "source": "print 1!=2;",
+    "expected": [
+      "true"
+    ]
+  },
+  {
+    "name": "if_true",
+    "source": "var x=1; if(x){print 10;}else{print 20;}",
+    "expected": [
+      "10"
+    ]
+  },
+  {
+    "name": "if_false",
+    "source": "var x=0; if(x){print 10;}else{print 20;}",
+    "expected": [
+      "20"
+    ]
+  },
+  {
+    "name": "if_elif_true",
+    "source": "var x=0; if(x){print 1;}elif(true){print 2;}else{print 3;}",
+    "expected": [
+      "2"
+    ]
+  },
+  {
+    "name": "if_elif_false",
+    "source": "var x=0; if(x){print 1;}elif(false){print 2;}else{print 3;}",
+    "expected": [
+      "3"
+    ]
+  },
+  {
+    "name": "if_elif_mixed",
+    "source": "var x=0; if(x){print 1;}elif(x==1){print 2;}elif(true){print 3;}else{print 4;}",
+    "expected": [
+      "3"
+    ]
+  },
+  {
+    "name": "while",
+    "source": "var i=0; while(i<3){print i;i=i+1;}",
+    "expected": [
+      "0",
+      "1",
+      "2"
+    ]
+  },
+  {
+    "name": "while_break",
+    "source": "var i=0;while(i<5){i=i+1;if(i==3){break;}}print i;",
+    "expected": [
+      "3"
+    ]
+  },
+  {
+    "name": "while_continue",
+    "source": "var i=0;while(i<5){i=i+1;if(i==3){continue;}print i;}",
+    "expected": [
+      "1",
+      "2",
+      "4",
+      "5"
+    ]
+  },
+  {
+    "name": "while_false",
+    "source": "while(false){print 1;}print 2;",
+    "expected": [
+      "2"
+    ]
+  },
+  {
+    "name": "nested_break",
+    "source": "var i=0;while(i<3){var j=0;while(j<2){j=j+1;}i=i+1;if(i==2){break;}}print i;",
+    "expected": [
+      "2"
+    ]
+  },
+  {
+    "name": "nested_continue",
+    "source": "var i=0;while(i<3){var j=0;while(j<2){j=j+1;}i=i+1;if(i==2){continue;}print i;}",
+    "expected": [
+      "1",
+      "3"
+    ]
+  },
+  {
+    "name": "nested_inner_break",
+    "source": "var i=0;while(i<2){var j=0;while(j<4){j=j+1;if(j==2){break;}}print j;i=i+1;}",
+    "expected": [
+      "2",
+      "2"
+    ]
+  },
+  {
+    "name": "for",
+    "source": "var i=0;for(i=0;i<3;i=i+1){print i;}",
+    "expected": [
+      "0",
+      "1",
+      "2"
+    ]
+  },
+  {
+    "name": "for_continue",
+    "source": "var i=0;for(i=0;i<5;i=i+1){if(i==2){continue;}print i;}",
+    "expected": [
+      "0",
+      "1",
+      "3",
+      "4"
+    ]
+  },
+  {
+    "name": "for_break",
+    "source": "var i=0;for(i=0;i<5;i=i+1){if(i==2){break;}print i;}print i;",
+    "expected": [
+      "0",
+      "1",
+      "2"
+    ]
+  },
+  {
+    "name": "for_nested_while",
+    "source": "var i=0;for(i=0;i<3;i=i+1){var j=0;while(j<2){j=j+1;}print i;}",
+    "expected": [
+      "0",
+      "1",
+      "2"
+    ]
+  },
+  {
+    "name": "if_while_nested",
+    "source": "var i=0;if(i==0){while(i<2){print i;i=i+1;}}else{print 9;}print i;",
+    "expected": [
+      "0",
+      "1",
+      "2"
+    ]
+  },
+  {
+    "name": "if_true_break",
+    "source": "var i=0;while(i<3){if(true){i=i+1;break;}else{print 99;}}print i;",
+    "expected": [
+      "1"
+    ]
+  },
+  {
+    "name": "for_false_cond",
+    "source": "var i=0;for(i=0;false;i=i+1){print 9;}print i;",
+    "expected": [
+      "0"
+    ]
+  },
+  {
+    "name": "foreach_base",
+    "source": "foreach(x in [1,2,3]){print x;}",
+    "expected": [
+      "1",
+      "2",
+      "3"
+    ]
+  },
+  {
+    "name": "foreach_break",
+    "source": "foreach(x in [1,2,3]){if(x==2){break;}print x;}",
+    "expected": [
+      "1"
+    ]
+  },
+  {
+    "name": "foreach_continue",
+    "source": "foreach(x in [1,2,3]){if(x==2){continue;}print x;}",
+    "expected": [
+      "1",
+      "3"
+    ]
+  },
+  {
+    "name": "nested_foreach",
+    "source": "var i=0;while(i<2){foreach(x in [1,2]){if(x==2){break;}print x;}i=i+1;}",
+    "expected": [
+      "1",
+      "1"
+    ]
+  }
+]

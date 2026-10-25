@@ -375,7 +375,7 @@ public:
 		this->name = "String";
 
 		if (auto lengthStr = ValuePool::getLengthStr()) {
-			Object::property_set(toValue(lengthStr), Value((double)content.size()));
+			Object::property_set(toValue(lengthStr), NUM_VAL(static_cast<double>(content.size())));
 		}
 	}
 	StringObject(const string str) : StringObject(str.c_str()) {}

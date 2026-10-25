@@ -83,7 +83,7 @@ string VTYPEN::repr_leaf(const Value& value, VM* vm) {
 Value Value_ADD(const Value& a, const Value& b, ValuePool* pool, bool& status) {
 	status = true;
 	if (IS_NUMBER(a) and IS_NUMBER(b)) {
-		return AS_NUMBER(a) + AS_NUMBER(b);
+		return NUM_VAL(AS_NUMBER(a) + AS_NUMBER(b));
 	}
 	else if (IS_STRINGOBJ(a) and IS_STRINGOBJ(b)) {
 		return OBJ_VAL(pool->internStr(*AS_STRING(a) + *AS_STRING(b)));
@@ -148,7 +148,7 @@ CMP_FUNC(GREATER_EQ, >= );
 Value Value_UNARY_NEGATE(const Value& a, bool& status) {
 	status = true; 
 	if (IS_NUMBER(a)) {
-		return -AS_NUMBER(a);
+		return NUM_VAL(-AS_NUMBER(a));
 	}
 	else {
 		status = false;
@@ -212,7 +212,7 @@ void ValuePool::finalizeSetup() {
 	for (const auto& x : permanent_objects) {
 		if (x->type == OBJECT_STRING) {
 			x->props.erase(OBJ_VAL(NULL));
-			x->props[OBJ_VAL(ValuePool::lengthString)] = (double)((StringObject*)x)->length();
+			x->props[OBJ_VAL(ValuePool::lengthString)] = NUM_VAL(static_cast<double>(((StringObject*)x)->length()));
 		}
 	}
 }

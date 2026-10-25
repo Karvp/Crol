@@ -55,6 +55,7 @@
 #define NATIVE_LHS_RETURNEXP(vm) *((vm)->stack_end -= arg_count)
 #define NATIVE_RETURN(vm, retexp) NATIVE_LHS_RETURNEXP(vm) = toValue(retexp); return;
 #define NATIVE_RETURN_NOWRAP(vm, retexp) NATIVE_LHS_RETURNEXP(vm) = (retexp); return;
+#define NATIVE_RETURN_NULL(vm) NATIVE_LHS_RETURNEXP(vm) = toValue(); return;
 
 #define NATIVE_RAISE(vm, value) (vm)->throwValue(value); return;
 

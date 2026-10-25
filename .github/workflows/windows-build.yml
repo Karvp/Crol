@@ -1,0 +1,41 @@
+name: Windows Build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check repository consistency
+        shell: pwsh
+        run: python tests/check_repository_consistency.py
+      - name: Build Crol
+        shell: pwsh
+        run: msbuild Crol.vcxproj /p:Configuration=${{ matrix.configuration }} /p:Platform=x64 /m:1 /p:UseMultiToolTask=false /p:CL_MPCount=1 /nologo /v:minimal
+      - name: Verify control flow
+        shell: pwsh
+        run: python tests/run_control_flow_tests.py x64/${{ matrix.configuration }}/Crol.exe
+      - name: Verify native functions
+        shell: pwsh
+        run: python tests/run_native_smoke_tests.py x64/${{ matrix.configuration }}/Crol.exe
+      - name: Verify numeric value representation
+        shell: pwsh
+        run: python tests/run_numeric_tests.py x64/${{ matrix.configuration }}/Crol.exe
+      - name: Save Release executable
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Crol-Windows-x64-Release
+          path: x64/Release/Crol.exe
+          if-no-files-found: error

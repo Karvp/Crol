@@ -64,7 +64,7 @@ void Chunk::print() {
 	OperationIterator opit(this);
 
 	for (const auto& op : opit) {
-		printf("%d | ", opit.opPos(op));
+		printf("%zu | ", opit.opPos(op));
 
 		switch (op.arg_count) {
 		case 0:

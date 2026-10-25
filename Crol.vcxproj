@@ -133,11 +133,11 @@
     <ClCompile Include="ast.cpp" />
     <ClCompile Include="chunk.cpp" />
     <ClCompile Include="common.cpp" />
-    <ClCompile Include="compiler.cpp" />
+    <ClCompile Include="COMPILER.CPP" />
     <ClCompile Include="Crol.cpp" />
     <ClCompile Include="lexer.cpp" />
     <ClCompile Include="natives.cpp" />
-    <ClCompile Include="object.cpp" />
+    <ClCompile Include="OBJECT.CPP" />
     <ClCompile Include="optimizer.cpp" />
     <ClCompile Include="parser.cpp" />
     <ClCompile Include="value.cpp" />
@@ -161,7 +161,6 @@
     <ClInclude Include="vm.h" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="implementing_asynchronous.md" />
     <None Include="object.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

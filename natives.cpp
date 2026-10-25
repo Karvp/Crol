@@ -311,7 +311,7 @@ namespace NativeInspectLib {
 			NATIVE_RETURN(vm, proto);
 		}
 		else {
-			NATIVE_RETURN(vm);
+			NATIVE_RETURN_NULL(vm);
 		}
 	}
 
@@ -325,7 +325,7 @@ namespace NativeInspectLib {
 		}
 
 		AS_OBJECT(*arg)->prototype = AS_OBJECT(*(arg + 1));
-		NATIVE_RETURN(vm);
+		NATIVE_RETURN_NULL(vm);
 	}
 
 
@@ -370,22 +370,22 @@ namespace NativeInspectLib {
 	static NATIVE_FN_SIG(printStack) {
 
 		for (auto it = vm->stackPtr; it <= vm->stack_end; ++it) {
-			printf("%d | ", it - vm->stackPtr);
+			printf("%td | ", it - vm->stackPtr);
 			TValue::print(*it);
 			printf("\n");
 		}
 
-		NATIVE_RETURN(vm);
+		NATIVE_RETURN_NULL(vm);
 	}
 
 	// Recipe: () -> null
 	static NATIVE_FN_SIG(viewStack) {
 
 		for (auto it = vm->stackPtr; it <= vm->stack_end; ++it) {
-			printf("%d | %s\n", it - vm->stackPtr, TValue::vtype_name(*it));
+			printf("%td | %s\n", it - vm->stackPtr, TValue::vtype_name(*it));
 		}
 
-		NATIVE_RETURN(vm);
+		NATIVE_RETURN_NULL(vm);
 	}
 
 	// Recipe: () -> null
@@ -395,7 +395,7 @@ namespace NativeInspectLib {
 			printf("%d | <%s> (%s)\n", ++i, f.callee->getFuncName(), f.isNativeFrame() ? "nativefn" : "function");
 		}
 
-		NATIVE_RETURN(vm);
+		NATIVE_RETURN_NULL(vm);
 	}
 
 	// Recipe: () -> pool_info<object>
@@ -436,7 +436,7 @@ namespace NativeInspectLib {
 		TValue::print(*arg);
 		funcobj->print();
 
-		NATIVE_RETURN(vm);
+		NATIVE_RETURN_NULL(vm);
 	}
 
 	// Recipe: (function<object>) -> null

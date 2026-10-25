@@ -405,3 +405,4 @@ _extracter_began:
 	SHORTCUT(Var);
 	SHORTCUT(Literal);
 };
+#undef SHORTCUT

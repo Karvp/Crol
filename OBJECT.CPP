@@ -179,7 +179,7 @@ NATIVE_METHOD_SIG(IterableObject, next) {
 	auto finished = obj->property_get(toValue(vm->pool->finishedString));
 
 	if (*finished) {
-		NATIVE_RETURN(vm);
+		NATIVE_RETURN_NULL(vm);
 	}
 
 	Value ret;
@@ -201,7 +201,7 @@ NATIVE_METHOD_SIG(IterableObject, feed) {
 	auto finished = obj->property_get(toValue(vm->pool->finishedString));
 
 	if (*finished) {
-		NATIVE_RETURN(vm);
+		NATIVE_RETURN_NULL(vm);
 	}
 
 	obj->rol_it.begin().it->feed(*arg);
@@ -558,7 +558,7 @@ NATIVE_METHOD_SIG(ListObject, list_push) {
 	auto& con = AS_TOBJECT(thisarg, ListObject)->list;
 	con.insert(con.end(), arg, arg + arg_count);
 
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(ListObject, list_insert) {
 	if (!IS_LISTOBJ(thisarg)) {
@@ -586,7 +586,7 @@ NATIVE_METHOD_SIG(ListObject, list_insert) {
 	auto& clist = AS_LIST(thisarg)->list;
 	clist.insert(clist.begin() + insert_pos, results.begin(), results.end());
 
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(ListObject, list_extend) {
 	if (!IS_LISTOBJ(thisarg)) {
@@ -604,7 +604,7 @@ NATIVE_METHOD_SIG(ListObject, list_extend) {
 		clist.push_back(x);
 	}
 
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(ListObject, list_extend_at) {
 	if (!IS_LISTOBJ(thisarg)) {
@@ -631,7 +631,7 @@ NATIVE_METHOD_SIG(ListObject, list_extend_at) {
 	auto& clist = AS_LIST(thisarg)->list;
 	clist.insert(clist.begin() + (size_t)AS_NUMBER(*arg), vec.begin(), vec.end());
 
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 
 NATIVE_METHOD_SIG(ListObject, list_pop) {
@@ -667,7 +667,7 @@ NATIVE_METHOD_SIG(ListObject, list_pop) {
 		NATIVE_RAISE_TERROR(vm, "Expected at most 1 argument");
 	}
 
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(ListObject, list_remove) {
 	if (!IS_LISTOBJ(thisarg)) {
@@ -689,7 +689,7 @@ NATIVE_METHOD_SIG(ListObject, list_remove) {
 
 	clist = con;
 
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 
 NATIVE_METHOD_SIG(ListObject, list_swap) {
@@ -709,7 +709,7 @@ NATIVE_METHOD_SIG(ListObject, list_swap) {
 	list[AS_NUMBER(*arg)] = list[AS_NUMBER(*(arg + 1))];
 	list[AS_NUMBER(*(arg + 1))] = temp;
 
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(ListObject, list_clear) {
 	if (!IS_LISTOBJ(thisarg)) {
@@ -717,7 +717,7 @@ NATIVE_METHOD_SIG(ListObject, list_clear) {
 	}
 
 	AS_TOBJECT(thisarg, ListObject)->list.clear();
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 
 NATIVE_METHOD_SIG(ListObject, list_find) {
@@ -913,7 +913,7 @@ NATIVE_METHOD_SIG(ListObject, list_replace) {
 		}
 	}
 
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(ListObject, list_replaceif) {
 	if (!IS_LISTOBJ(thisarg)) {
@@ -948,7 +948,7 @@ NATIVE_METHOD_SIG(ListObject, list_replaceif) {
 	}
 
 	----vm->stack_end;
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 
 NATIVE_METHOD_SIG(ListObject, list_accumulate) {
@@ -1015,7 +1015,7 @@ NATIVE_METHOD_SIG(ListObject, list_each) {
 	}
 
 	----vm->stack_end;
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(ListObject, list_map) {
 	if (!IS_LISTOBJ(thisarg)) {
@@ -1063,7 +1063,7 @@ NATIVE_METHOD_SIG(ListObject, list_reverse) {
 	auto& con = AS_TOBJECT(thisarg, ListObject)->list;
 	reverse(con.begin(), con.end());
 
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(ListObject, list_sort) {
 	if (!IS_LISTOBJ(thisarg)) {
@@ -1135,7 +1135,7 @@ NATIVE_METHOD_SIG(ListObject, list_sort) {
 		NATIVE_RAISE_TERROR(vm, "Expected at most 2 arguments");
 	}
 
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(ListObject, list_shuffle) {
 	if (!IS_LISTOBJ(thisarg)) {
@@ -1145,7 +1145,7 @@ NATIVE_METHOD_SIG(ListObject, list_shuffle) {
 	auto& con = AS_TOBJECT(thisarg, ListObject)->list;
 	shuffle(con.begin(), con.end(), vm->pool->random_generator);
 
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 
 NATIVE_METHOD_SIG(ListObject, list_sub) {
@@ -1232,7 +1232,7 @@ NATIVE_METHOD_SIG(ListObject, list_cycle) {
 	cycle_index %= clist.size();
 
 	if (!cycle_index) {
-		NATIVE_RETURN(vm);
+		NATIVE_RETURN_NULL(vm);
 	}
 	else if (cycle_index < 0) {
 		cycle_index += clist.size();
@@ -1247,7 +1247,7 @@ NATIVE_METHOD_SIG(ListObject, list_cycle) {
 	clist.assign(temp, temp + list_size);
 
 	delete[] temp;
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 
 //
@@ -1386,7 +1386,7 @@ NATIVE_METHOD_SIG(TupleObject, tuple_each) {
 	}
 
 	----vm->stack_end;
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(TupleObject, tuple_map) {
 	if (!IS_TUPLEOBJ(thisarg)) {
@@ -1489,7 +1489,7 @@ NATIVE_METHOD_SIG(SetObject, set_add) {
 	}
 
 	AS_SET(thisarg)->values.insert(arg, arg + arg_count);
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(SetObject, set_extend) {
 	if (!IS_SETOBJ(thisarg)) {
@@ -1506,7 +1506,7 @@ NATIVE_METHOD_SIG(SetObject, set_extend) {
 	AS_SET(thisarg)->values.insert(temp, temp + size);
 
 	delete[] temp;
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 
 NATIVE_METHOD_SIG(SetObject, set_pop) {
@@ -1516,7 +1516,7 @@ NATIVE_METHOD_SIG(SetObject, set_pop) {
 
 	auto& set = AS_SET(thisarg)->values;
 	set.erase(set.begin());
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(SetObject, set_remove) {
 	if (!IS_SETOBJ(thisarg)) {
@@ -1527,7 +1527,7 @@ NATIVE_METHOD_SIG(SetObject, set_remove) {
 	}
 
 	AS_SET(thisarg)->values.erase(*arg);
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 NATIVE_METHOD_SIG(SetObject, set_discard_intersection) {
 	if (!IS_SETOBJ(thisarg)) {
@@ -1540,7 +1540,7 @@ NATIVE_METHOD_SIG(SetObject, set_discard_intersection) {
 	auto& origin_set = AS_SET(*arg)->values;
 
 	AS_SET(thisarg)->values.erase(origin_set.begin(), origin_set.end());
-	NATIVE_RETURN(vm);
+	NATIVE_RETURN_NULL(vm);
 }
 
 NATIVE_METHOD_SIG(SetObject, set_union) {
